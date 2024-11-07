@@ -5,6 +5,8 @@ from importlib import import_module
 from packaging import version
 import logging
 
+from astUtils import node2source
+
 logging.basicConfig(level=logging.DEBUG)
 
 SOLC_VERSION = "0.8.28"
@@ -31,10 +33,6 @@ parser.add_argument("--output", "-o", help="the path of the obfuscated file")
 args = parser.parse_args()
 
 logger = logging.getLogger(__name__)
-
-
-def node2source(node: dict) -> str:
-	return str(node)
 
 
 def main():
@@ -105,11 +103,11 @@ def main():
 		if m["enabled"] is True:
 
 			module_name = m["name"]
-			module = import_module(module_name + ".obfuscate")
+			module = import_module(module_name)
 			logging.debug(f"Loadded obfuscation module {module_name}")
 
 			# calling module.obfuscate.do()
-			node_obf = module.do(node_obf)
+			node_obf = module.obfuscate(node_obf)
 
 	# convert and compress to source code
 	source_obf = node2source(node_obf)
