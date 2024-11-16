@@ -4,6 +4,7 @@ from copy import deepcopy
 from importlib import import_module
 from packaging import version
 import logging
+import time
 
 from astUtils import node2src
 
@@ -102,6 +103,9 @@ def main():
 
     node = nodes[0]  # TODO: obfuscate all sources under a directory
 
+    start_time = time.time()
+    logger.debug(f"Obfuscation starts at {time.asctime(time.localtime(start_time))}")
+
     # do obfuscation
     node_obf = deepcopy(node)
     for m in MODULES:
@@ -109,17 +113,22 @@ def main():
 
             module_name = m["name"]
             module = import_module(module_name)
-            logger.debug(f"Loadded obfuscation module {module_name}")
+            logger.debug(f"Loaded obfuscation module {module_name}")
 
             # calling module.obfuscate.do()
             node_obf = module.obfuscate(node_obf)
 
     # convert and compress to source code
-    source_obf = node2src(node_obf)
+    if LOG_LEVEL == logging.DEBUG:
+        source_obf = node2src(node_obf, indent=2)
+    else:
+        source_obf = node2src(node_obf)
+
     with open(output_path, "w") as fp:
         fp.write(source_obf)
 
-    logger.debug(f"Done!")
+    elapsed = time.time() - start_time
+    logger.debug(f"Done! Time elapsed: {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
