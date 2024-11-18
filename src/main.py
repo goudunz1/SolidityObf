@@ -63,7 +63,7 @@ def main():
         output_path = args.output
     else:
         file_base, _ = os.path.splitext(file_name)
-        output_path = file_dir + os.path.sep + file_base + "_obf.sol"
+        output_path = file_dir + os.path.sep + file_base + ".obfuscated.sol"
 
     logger.debug(f"Using {output_path} as output")
 
@@ -108,8 +108,14 @@ def main():
     start_time = time.time()
     logger.debug(f"Obfuscation starts at {time.asctime(time.localtime(start_time))}")
 
-    # do obfuscation
-    node_obf = deepcopy(node)
+    # TODO: currently deepcopy of solcast node may encounter problems because of
+    # parent <-> child reference
+    # gonna integrate its code instead of importing it in the future
+    # for now we do not copy it
+    # if a copy is really needed, regenerate one with output_json
+    #node_obf = deepcopy(node)
+    node_obf = node
+
     for m in MODULES:
         if m["enabled"] is True:
 
@@ -117,7 +123,7 @@ def main():
             module = import_module(module_name)
             logger.debug(f"Loaded obfuscation module {module_name}")
 
-            # calling module.obfuscate()
+            # we're calling module.obfuscate() here
             node_obf = module.obfuscate(node_obf)
 
     # convert and compress to source code

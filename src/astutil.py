@@ -3,7 +3,7 @@ import string
 
 logger = logging.getLogger(__name__)
 
-SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_"
+SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_'\""
 
 
 def gen_for_stmt(init_expr, cond, loop_expr):
@@ -43,7 +43,7 @@ def node2src(root, indent=0) -> str:
         nonlocal aux_stack
         aux_stack.extend(obj)
 
-    def emit_block(obj):
+    def emit_block(obj, line_break=True):
         nonlocal aux_stack
         aux_stack.append("{")
         aux_stack.append("\n")
@@ -51,7 +51,8 @@ def node2src(root, indent=0) -> str:
         aux_stack.extend(obj)
         aux_stack.append(-1)
         aux_stack.append("}")
-        aux_stack.append("\n")
+        if line_break is True:
+            aux_stack.append("\n")
 
     def end_stmt(line_break=True):
         nonlocal aux_stack
@@ -88,6 +89,12 @@ def node2src(root, indent=0) -> str:
             emit(node.license)
             emit("\n")
         emit(node.nodes)
+
+    @solidity
+    def ImportDirective(node):
+        emit("import")
+        emit(f'"{node.absolutePath}"')
+        end_stmt()
 
     @solidity
     def PragmaDirective(node):
@@ -245,7 +252,7 @@ def node2src(root, indent=0) -> str:
     def IfStatement(node):
         emit("if")
         emit_many("(", node.condition, ")")
-        emit_block(node.trueBody)
+        emit_block(node.trueBody, not hasattr(node, "falseBody"))
         if hasattr(node, "falseBody"):
             emit("else")
             if isinstance(node.falseBody, list) or isinstance(node.falseBody, tuple):
@@ -271,6 +278,12 @@ def node2src(root, indent=0) -> str:
         emit("while")
         emit_many("(", node.condition, ")")
         emit_block(node.nodes)
+
+    @solidity
+    def Return(node):
+        emit("return")
+        emit(node.expression)
+        end_stmt()
 
     @solidity
     def FunctionCall(n):
