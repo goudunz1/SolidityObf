@@ -6,17 +6,19 @@ from packaging import version
 import logging
 import time
 
-from astUtils import node2src
+from astutil import node2src
 
 SOLC_VERSION = "0.8.28"
 
 LOG_LEVEL = logging.DEBUG
 
 MODULES = [
-    {"name": "dataFlowObfuscate", "enabled": False},
-    {"name": "layoutObfuscate", "enabled": False},
-    {"name": "opaquePredicates", "enabled": False},
-    {"name": "controlFlowFlatten", "enabled": False},
+    # to enable a module, add it here
+    # all modules must implement function obfuscate() which takes a SourceUnit
+    # node as input and returns a obfuscated SourceUnit node
+    #
+    # example of adding and enabling cff.py
+    # {"name": "cff", "enabled": True},
 ]
 
 parser = argparse.ArgumentParser()
@@ -115,7 +117,7 @@ def main():
             module = import_module(module_name)
             logger.debug(f"Loaded obfuscation module {module_name}")
 
-            # calling module.obfuscate.do()
+            # calling module.obfuscate()
             node_obf = module.obfuscate(node_obf)
 
     # convert and compress to source code
