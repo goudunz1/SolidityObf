@@ -6,7 +6,7 @@ from packaging import version
 import logging
 import time
 
-from astutil import node2src
+from astUtils import node2src
 
 SOLC_VERSION = "0.8.28"
 
@@ -19,6 +19,7 @@ MODULES = [
     #
     # example of adding and enabling cff.py
     # {"name": "cff", "enabled": True},
+    {"name": "junkCode", "enabled": True}
 ]
 
 parser = argparse.ArgumentParser()

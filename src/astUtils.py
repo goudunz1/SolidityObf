@@ -3,7 +3,8 @@ import string
 
 logger = logging.getLogger(__name__)
 
-SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_'\""
+SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_"
+SOLIDITY_PAIRS = {"{": "}", "(": ")", "[": "]"}
 
 
 def gen_for_stmt(init_expr, cond, loop_expr):
@@ -16,18 +17,16 @@ def gen_if_stmt(cond, true_body, false_body):
 
 def node2src(root, indent=0) -> str:
 
-    indent_level = 0  # indent level iff. indent is on
-    new_line = False  # new line flag, iff. indent is on
-
     tokens = []  # list of source tokens
-    pre_ord_stack = []  # stack used for pre-order traverse
+    pre_ord_stack = []  # pre-order traverse stack
 
-    aux_stack = []  # stack used to store local tokens
+    aux_stack = []  # stack of local tokens
 
     def add_token(tok):
         nonlocal tokens
         if len(tokens) > 1:
             last = tokens[-1]
+            # Insert separator (space) only when necessary
             if x[0] in SOLIDITY_IDENTIFIER and last[-1] in SOLIDITY_IDENTIFIER:
                 tokens.append(" ")
         tokens.append(tok)
@@ -39,42 +38,95 @@ def node2src(root, indent=0) -> str:
         else:
             aux_stack.extend(obj)
 
-    def emit_many(*obj):
-        nonlocal aux_stack
-        aux_stack.extend(obj)
+    emit_many = lambda *obj: aux_stack.extend(obj)
 
-    def emit_block(obj, line_break=True):
-        nonlocal aux_stack
-        aux_stack.append("{")
-        aux_stack.append("\n")
-        aux_stack.append(1)
-        aux_stack.extend(obj)
-        aux_stack.append(-1)
-        aux_stack.append("}")
-        if line_break is True:
+    indent_level = 0  # indent level iff. indent is on
+    new_line = False  # new line flag, iff. indent is on
+
+    if indent == 0:
+
+        def emit_block(obj, **kwargs):
+            nonlocal aux_stack
+            aux_stack.append("{")
+            aux_stack.extend(obj)
+            aux_stack.append("}")
+
+        end_stmt = lambda **kwargs: aux_stack.append(";")
+
+        def emit_tuple(obj, style=None, **kwargs):
+            nonlocal aux_stack
+
+            if style is not None:
+                aux_stack.append(style)
+
+            if len(obj) > 0:
+                for i in range(len(obj) - 1):
+                    aux_stack.append(obj[i])
+                    aux_stack.append(",")
+                aux_stack.append(obj[-1])
+
+            if style is not None:
+                aux_stack.append(SOLIDITY_PAIRS[style])
+
+    else:  # for debugging
+
+        def emit_block(obj, line_break=True):
+            nonlocal aux_stack
+            aux_stack.append("{")
             aux_stack.append("\n")
+            aux_stack.append(1)
+            aux_stack.extend(obj)
+            aux_stack.append(-1)
+            aux_stack.append("}")
+            if line_break is True:
+                aux_stack.append("\n")
 
-    def end_stmt(line_break=True):
-        nonlocal aux_stack
-        aux_stack.append(";")
-        if line_break is True:
-            aux_stack.append("\n")
+        def end_stmt(line_break=True):
+            nonlocal aux_stack
+            aux_stack.append(";")
+            if line_break is True:
+                aux_stack.append("\n")
 
-    def emit_tuple(obj):
-        nonlocal aux_stack
-        aux_stack.append("(")
-        if len(obj) > 0:
-            for i in range(len(obj) - 1):
-                aux_stack.append(obj[i])
-                aux_stack.append(",")
-            aux_stack.append(obj[-1])
-        aux_stack.append(")")
+        def emit_tuple(obj, style=None, line_break=False):
+            nonlocal aux_stack
+
+            if style is not None:
+                aux_stack.append(style)
+                if line_break is True:
+                    aux_stack.append("\n")
+                    aux_stack.append(1)
+
+            if len(obj) > 0:
+                for i in range(len(obj) - 1):
+                    aux_stack.append(obj[i])
+                    aux_stack.append(",")
+                    if line_break is True:
+                        aux_stack.append("\n")
+                aux_stack.append(obj[-1])
+                if line_break is True:
+                    aux_stack.append("\n")
+                    aux_stack.append(-1)
+
+            if style is not None:
+                aux_stack.append(SOLIDITY_PAIRS[style])
+                if line_break is True:
+                    aux_stack.append("\n")
 
     def solidity(handler):
 
         def wrapper(node, *args, **kwargs):
             nonlocal aux_stack
-            handler(node, *args, **kwargs)
+
+            try:
+                handler(node, *args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Bad node {node}! Maybe the node is missing some key attributes?",
+                    exc_info=True,
+                )
+                return
+
+            # Squeeze aux_stack into pre_ord_stack to maintain pre-order
             while len(aux_stack) > 0:
                 item = aux_stack.pop()
                 pre_ord_stack.append(item)
@@ -87,7 +139,7 @@ def node2src(root, indent=0) -> str:
         if hasattr(node, "license"):
             emit("//SPDX-License-Identifier:")
             emit(node.license)
-            emit("\n")
+            emit("\n")  # This is necessary and has nothing to do with indent
         emit(node.nodes)
 
     @solidity
@@ -104,28 +156,43 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ContractDefinition(node):
-        if node.abstract is True:
+        if node.abstract is True:  # abstract?
+            # For interface and library this's always False
             emit("abstract")
-        emit(node.contractKind)
-        emit(node.name)
-        emit_block(node.nodes)
+        emit(node.contractKind)  # interface, contract or library
+        emit(node.name)  # contract name
+        if len(node.baseContracts) > 0:  # inheritance
+            emit("is")
+            emit_tuple(node.baseContracts)
+        emit_block(node.nodes)  # contract body
 
     @solidity
-    def VariableDeclarationStatement(node):
-        if len(node.declarations) > 1:
-            emit_tuple(node.declarations)
-        else:
-            emit(node.declarations[0])
-        emit("=")
-        emit(node.initialValue)
-        caller = node.parent()
-        if (
-            caller.nodeType == "ForStatement"
-            and node is caller.initializationExpression
-        ):
-            end_stmt(line_break=False)
-        else:
+    def InheritanceSpecifier(node):
+        emit(node.baseName)
+
+    if indent == 0:
+
+        @solidity
+        def VariableDeclarationStatement(node):
+            emit_tuple(node.declarations, "(")
+            emit("=")
+            emit(node.initialValue)
             end_stmt()
+
+    else:
+
+        @solidity
+        def VariableDeclarationStatement(node):
+            emit_tuple(node.declarations, "(")
+            emit("=")
+            emit(node.initialValue)
+            caller = node.parent()
+            end_stmt(
+                line_break=not (
+                    caller.nodeType == "ForStatement"
+                    and node is caller.initializationExpression
+                )
+            )
 
     @solidity
     def VariableDeclaration(node):
@@ -183,7 +250,7 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ParameterList(node):
-        emit_tuple(node.parameters)
+        emit_tuple(node.parameters, "(")
 
     @solidity
     def EventDefinition(node):
@@ -191,6 +258,23 @@ def node2src(root, indent=0) -> str:
         emit(node.name)
         emit(node.parameters)
         end_stmt()
+
+    @solidity
+    def ErrorDefinition(node):
+        emit("error")
+        emit(node.name)
+        emit(node.parameters)
+        end_stmt()
+
+    @solidity
+    def EnumDefinition(node):
+        emit("enum")
+        emit(node.name)
+        emit_tuple(node.members, style="{", line_break=True)
+
+    @solidity
+    def EnumValue(node):
+        emit(node.name)
 
     @solidity
     def StructDefinition(node):
@@ -223,6 +307,7 @@ def node2src(root, indent=0) -> str:
     def ArrayTypeName(node):
         emit(node.baseType)
         emit("[")
+        # TODO: fixed length array
         emit("]")
 
     @solidity
@@ -288,7 +373,7 @@ def node2src(root, indent=0) -> str:
     @solidity
     def FunctionCall(n):
         emit(n.expression)
-        emit_tuple(n.arguments)
+        emit_tuple(n.arguments, "(")
 
     @solidity
     def MemberAccess(node):
@@ -312,12 +397,29 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def Literal(node):
+
+        # string literals, printable
         if node.kind == "string":
-            emit(f'"{node.value}"')
-        else:
+            emit(ascii(node.value))
+
+        # string literals, non-printable
+        elif node.kind == "unicodeString":
+            emit_many("unicode", ascii(node.value))
+
+        # hex string literals
+        elif node.kind == "hexString":
+            emit_many("hex", '"%s"' % node.hexValue)
+
+        # number literals
+        elif node.kind == "number":
             emit(node.value)
+            # Note that there could be a sub-denomination, i.e. 100 wei
             if hasattr(node, "subdenomination"):
                 emit(node.subdenomination)
+
+        # bool literals and any undefined literals goes here
+        else:
+            emit(node.value)
 
     @solidity
     def Identifier(n):
@@ -329,11 +431,8 @@ def node2src(root, indent=0) -> str:
         x = pre_ord_stack.pop()
         if isinstance(x, str):
             if indent == 0:
-                if x == "\n":
-                    continue
-                else:
-                    add_token(x)
-            else:  # for indented source
+                add_token(x)
+            else:  # iff. indent is on
                 if new_line is True:
                     if indent_level > 0:
                         add_token(" " * indent_level)
@@ -341,17 +440,19 @@ def node2src(root, indent=0) -> str:
                 add_token(x)
                 if x == "\n":
                     new_line = True
-        elif isinstance(x, int):
-            indent_level += x * indent
-            if indent_level < 0:
-                indent_level = 0
         elif hasattr(x, "nodeType"):
             handler = locals().get(x.nodeType)
             if handler is not None and hasattr(handler, "solidity"):
                 handler(x)
             else:
                 logger.warning(f"AST node {x.nodeType} is not supported yet!")
+        elif isinstance(x, int):  # iff. indent is on
+            indent_level += x * indent
+            if indent_level < 0:
+                indent_level = 0
         else:
-            logger.warning(f"AST node of type {type(x)} is invalid")
+            logger.error(
+                f"Bad node {x}! Maybe the node is missing some key attributes?"
+            )
 
     return "".join(tokens)
