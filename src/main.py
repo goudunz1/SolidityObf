@@ -19,7 +19,8 @@ MODULES = [
     #
     # example of adding and enabling cff.py
     # {"name": "cff", "enabled": True},
-    {"name": "junkCode", "enabled": True}
+    {"name": "junkCode", "enabled": True},
+    {"name": "opaquePredicates", "enabled": True}
 ]
 
 parser = argparse.ArgumentParser()
@@ -101,10 +102,15 @@ def main():
         logger.error(f"Compilation error, check your input file path")
         return
 
+    # with open("english_auction.json", "w", encoding="utf-8") as json_file:
+    #     json.dump(output_json, json_file, ensure_ascii=False, indent=4)
+
     nodes = solcast.from_standard_output(output_json)
     logger.debug(f"Get {nodes} from source")
 
     node = nodes[0]  # TODO: obfuscate all sources under a directory
+    # print(node['conditionTest']['condition'].nodes[0].__dict__)
+    # print(node['conditionTest']['condition'].nodes[0].condition.__dict__)
 
     start_time = time.time()
     logger.debug(f"Obfuscation starts at {time.asctime(time.localtime(start_time))}")
