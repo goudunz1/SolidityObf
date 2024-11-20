@@ -138,7 +138,7 @@ def main():
         fp.write(source_obf)
 
     elapsed = time.time() - start_time
-    logger.debug(f"Done! Time elapsed: {elapsed:.2f}s")
+    logger.debug(f"Done! Time elapsed: {elapsed:.8f}s")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import string
 
 logger = logging.getLogger(__name__)
 
-SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_"
+GOOD_CHARS = string.ascii_letters + string.digits + "$_"
 
 
 def gen_for_stmt(init_expr, cond, loop_expr):
@@ -28,13 +28,13 @@ def node2src(root, indent=0) -> str:
         if len(tokens) > 1:
             last = tokens[-1]
             # Insert separator (space) only when necessary
-            if x[0] in SOLIDITY_IDENTIFIER and last[-1] in SOLIDITY_IDENTIFIER:
+            if x[0] in GOOD_CHARS and last[-1] in GOOD_CHARS:
                 tokens.append(" ")
         tokens.append(tok)
 
     def emit(obj):
         nonlocal aux_stack
-        if type(obj) is list or type(obj) is tuple:
+        if isinstance(obj, (list, tuple)):
             aux_stack.extend(obj)
         else:
             aux_stack.append(obj)
@@ -349,10 +349,8 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def EventDefinition(node):
-        emit("event")
-        emit(node.name)
-        emit(node.parameters)
-        # is anonymous?
+        emit_many("event", node.name, node.parameters)
+        # is it anonymous?
         if node.anonymous is True:
             emit("anonymous")
         end_stmt()
@@ -465,7 +463,7 @@ def node2src(root, indent=0) -> str:
         # Check if else branch present
         has_else = hasattr(node, "falseBody")
         # trueBody can be a list of nodes or a normal node
-        if isinstance(node.trueBody, list) or isinstance(node.trueBody, tuple):
+        if isinstance(node.trueBody, (list, tuple)):
             # Do not insert line break if there's an else branch
             emit_block(node.trueBody, continuous=has_else)
         else:
@@ -474,7 +472,7 @@ def node2src(root, indent=0) -> str:
         if has_else:
             emit("else")
             # falseBody can be a list of nodes or a normal node
-            if isinstance(node.falseBody, list) or isinstance(node.falseBody, tuple):
+            if isinstance(node.falseBody, (list, tuple)):
                 emit_block(node.falseBody)
             else:
                 emit(node.falseBody)
