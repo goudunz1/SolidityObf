@@ -16,46 +16,79 @@ def gen_if_stmt(cond, true_body, false_body):
     pass
 
 
-def node2src(root, indent=0) -> str:
+def node2src(root: object, indent: int = 0) -> str:
+    """
+    Convert a *SourceUnit* AST node to solidity source
+    Parameters:
+        root (object): a *SourceUnit* AST node AKA. the root
+        indent (int): If this field is set to a positive value, indent will be
+            turned on, otherwise we generate compact source code
+    Returns:
+        the source code
+    """
 
     tokens = []  # list of source tokens
     pre_ord_stack = []  # pre-order traverse stack
 
     aux_stack = []  # stack of local tokens
 
-    def add_token(tok):
+    def add_token(token: str):
+        """
+        Push a new token into string builder
+        Parameters:
+            token (str): the new token
+        """
+
         nonlocal tokens
+
         if len(tokens) > 1:
             last = tokens[-1]
             # Insert separator (space) only when necessary
             if x[0] in GOOD_CHARS and last[-1] in GOOD_CHARS:
                 tokens.append(" ")
-        tokens.append(tok)
+        tokens.append(token)
 
-    def emit(obj):
+    def emit(obj: list | str | int | object):
+        """
+        Push a new component onto local stack, used in grammar handlers
+        Parameters:
+            obj (object): the component to be processed
+        """
+
         nonlocal aux_stack
+
         if isinstance(obj, (list, tuple)):
             aux_stack.extend(obj)
         else:
             aux_stack.append(obj)
 
     # auxiliary function emit_many()
+    # like emit(), but for dynamic parameters
     emit_many = lambda *obj: aux_stack.extend(obj)
 
     # auxiliary function end_stmt()
-    if indent == 0:
-        end_stmt = lambda: aux_stack.append(";")
-    else:
+    # end statement with a semicolon
+    if indent > 0:
         end_stmt = lambda: aux_stack.append(";\n")
+    else:
+        end_stmt = lambda: aux_stack.append(";")
 
     shift = 0  # indent level iff. indent is on
     new_line = False  # new line flag, iff. indent is on
 
-    def emit_block(obj: list, continuous=False):
+    def emit_block(obj: list, continuous: bool = False):
+        """
+        Push a list of components in block format
+        Parameters:
+            obj (list): the block body
+            continuous (bool): whether to insert LF after the closing bracket,
+                effective iff. indent is on
+        """
+
         nonlocal aux_stack
 
         aux_stack.append("{")
-        if indent > 0:
+        if indent > 0:  # indent mode, for debug purpose only
             aux_stack.append(1)
             aux_stack.append("\n")
 
@@ -69,7 +102,15 @@ def node2src(root, indent=0) -> str:
         else:
             aux_stack.append("}")
 
-    def emit_tuple(obj: list, paren=True):
+    def emit_tuple(obj: list, paren: bool = True):
+        """
+        Push a list of components in tuple format
+        Parameters:
+            obj (list): the tuple body
+            paren (bool): whether to show the parentheses, i.e.
+                inheritance-specifier
+        """
+
         nonlocal aux_stack
 
         if paren is True:
@@ -84,14 +125,27 @@ def node2src(root, indent=0) -> str:
         if paren is True:
             aux_stack.append(")")
 
-    def emit_dict(values: list, keys: list = None, line_break=False):
+    def emit_dict(values: list, keys: list | None = None, line_break: bool = False):
+        """
+        Push a list of component in dict format
+        Parameters:
+            values (list): the dict body
+            keys (list): If this field is not None, generate dict as key-value
+                pairs, i.e. function-call with positional arguments
+
+                Key list (if present) has to be equal to value list in length
+            line_break (bool): If this field is True, insert LF after large
+                brackets and each comma, i.e. enum-definition
+        """
+
         nonlocal aux_stack
 
-        if indent > 0 and line_break is True:
+        if indent > 0 and line_break is True:  # indent mode, for debug purpose only
             aux_stack.append("{")
             aux_stack.append(1)
             aux_stack.append("\n")
 
+            # Empty value list, skip generation of components
             if len(values) > 0:
                 if keys is None:
                     for i in range(len(values)):
@@ -110,6 +164,7 @@ def node2src(root, indent=0) -> str:
         else:
             aux_stack.append("{")
 
+            # Empty value list, skip generation of components
             if len(values) > 0:
                 if keys is None:
                     for i in range(len(values)):
@@ -127,6 +182,11 @@ def node2src(root, indent=0) -> str:
             aux_stack.append("}")
 
     def solidity(handler):
+        """
+        The decorator indicating a grammar handler
+
+        Any function with this decorator handles an AST node
+        """
 
         def wrapper(node, *args, **kwargs):
             nonlocal aux_stack
@@ -147,6 +207,10 @@ def node2src(root, indent=0) -> str:
 
         wrapper.solidity = True
         return wrapper
+    
+    #####################################
+    # Grammar handlers are defined here #
+    #####################################
 
     @solidity
     def SourceUnit(node):
@@ -591,6 +655,10 @@ def node2src(root, indent=0) -> str:
     def Identifier(n):
         emit(n.name)
 
+    ################
+    # the mainloop #
+    ################
+
     logger.debug("Converting syntax tree to source")
 
     # To speed up pre-order visiting, we use stack-based iteration instead of
@@ -602,10 +670,8 @@ def node2src(root, indent=0) -> str:
 
         # Pure string value, should send it directly to tokens
         if isinstance(x, str):
-            if indent == 0:
-                add_token(x)
             # iff. indent is on
-            else:
+            if indent > 0:
                 if new_line is True:
                     if shift > 0:
                         add_token(" " * shift)
@@ -613,6 +679,8 @@ def node2src(root, indent=0) -> str:
                 add_token(x)
                 if x.endswith("\n"):
                     new_line = True
+            else:
+                add_token(x)
 
         # a node
         # We need to split it into tokens and subnodes and put 'em back to stack
