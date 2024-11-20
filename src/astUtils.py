@@ -4,14 +4,15 @@ import string
 logger = logging.getLogger(__name__)
 
 SOLIDITY_IDENTIFIER = string.ascii_letters + string.digits + "$_"
-SOLIDITY_PAIRS = {"{": "}", "(": ")", "[": "]"}
 
 
 def gen_for_stmt(init_expr, cond, loop_expr):
+    # TODO: reuseable for statement for obfuscate modules
     pass
 
 
 def gen_if_stmt(cond, true_body, false_body):
+    # TODO: reuseable if statement for obfuscate modules
     pass
 
 
@@ -33,84 +34,97 @@ def node2src(root, indent=0) -> str:
 
     def emit(obj):
         nonlocal aux_stack
-        if type(obj) is not list and type(obj) is not tuple:
-            aux_stack.append(obj)
-        else:
+        if type(obj) is list or type(obj) is tuple:
             aux_stack.extend(obj)
+        else:
+            aux_stack.append(obj)
 
+    # auxiliary function emit_many()
     emit_many = lambda *obj: aux_stack.extend(obj)
 
-    indent_level = 0  # indent level iff. indent is on
+    # auxiliary function end_stmt()
+    if indent == 0:
+        end_stmt = lambda: aux_stack.append(";")
+    else:
+        end_stmt = lambda: aux_stack.append(";\n")
+
+    shift = 0  # indent level iff. indent is on
     new_line = False  # new line flag, iff. indent is on
 
-    if indent == 0:
+    def emit_block(obj: list, continuous=False):
+        nonlocal aux_stack
 
-        def emit_block(obj, **kwargs):
-            nonlocal aux_stack
-            aux_stack.append("{")
-            aux_stack.extend(obj)
-            aux_stack.append("}")
-
-        end_stmt = lambda **kwargs: aux_stack.append(";")
-
-        def emit_tuple(obj, style=None, **kwargs):
-            nonlocal aux_stack
-
-            if style is not None:
-                aux_stack.append(style)
-
-            if len(obj) > 0:
-                for i in range(len(obj) - 1):
-                    aux_stack.append(obj[i])
-                    aux_stack.append(",")
-                aux_stack.append(obj[-1])
-
-            if style is not None:
-                aux_stack.append(SOLIDITY_PAIRS[style])
-
-    else:  # for debugging
-
-        def emit_block(obj, line_break=True):
-            nonlocal aux_stack
-            aux_stack.append("{")
-            aux_stack.append("\n")
+        aux_stack.append("{")
+        if indent > 0:
             aux_stack.append(1)
-            aux_stack.extend(obj)
+            aux_stack.append("\n")
+
+        aux_stack.extend(obj)
+
+        if indent > 0:
             aux_stack.append(-1)
             aux_stack.append("}")
-            if line_break is True:
+            if continuous is False:
                 aux_stack.append("\n")
+        else:
+            aux_stack.append("}")
 
-        def end_stmt(line_break=True):
-            nonlocal aux_stack
-            aux_stack.append(";")
-            if line_break is True:
-                aux_stack.append("\n")
+    def emit_tuple(obj: list, paren=True):
+        nonlocal aux_stack
 
-        def emit_tuple(obj, style=None, line_break=False):
-            nonlocal aux_stack
+        if paren is True:
+            aux_stack.append("(")
 
-            if style is not None:
-                aux_stack.append(style)
-                if line_break is True:
-                    aux_stack.append("\n")
-                    aux_stack.append(1)
+        if len(obj) > 0:
+            for i in range(len(obj) - 1):
+                aux_stack.append(obj[i])
+                aux_stack.append(",")
+            aux_stack.append(obj[-1])
 
-            if len(obj) > 0:
-                for i in range(len(obj) - 1):
-                    aux_stack.append(obj[i])
-                    aux_stack.append(",")
-                    if line_break is True:
-                        aux_stack.append("\n")
-                aux_stack.append(obj[-1])
-                if line_break is True:
-                    aux_stack.append("\n")
-                    aux_stack.append(-1)
+        if paren is True:
+            aux_stack.append(")")
 
-            if style is not None:
-                aux_stack.append(SOLIDITY_PAIRS[style])
-                if line_break is True:
-                    aux_stack.append("\n")
+    def emit_dict(values: list, keys: list = None, line_break=False):
+        nonlocal aux_stack
+
+        if indent > 0 and line_break is True:
+            aux_stack.append("{")
+            aux_stack.append(1)
+            aux_stack.append("\n")
+
+            if len(values) > 0:
+                if keys is None:
+                    for i in range(len(values)):
+                        aux_stack.append(values[i])
+                        aux_stack.append(",\n" if i < len(values) - 1 else "\n")
+                else:
+                    for i in range(len(values)):
+                        aux_stack.append(keys[i])
+                        aux_stack.append(":")
+                        aux_stack.append(values[i])
+                        aux_stack.append(",\n" if i < len(values) - 1 else "\n")
+
+            aux_stack.append(-1)
+            aux_stack.append("}")
+            aux_stack.append("\n")
+        else:
+            aux_stack.append("{")
+
+            if len(values) > 0:
+                if keys is None:
+                    for i in range(len(values)):
+                        aux_stack.append(values[i])
+                        if i < len(values) - 1:
+                            aux_stack.append(",")
+                else:
+                    for i in range(len(keys)):
+                        aux_stack.append(keys[i])
+                        aux_stack.append(":")
+                        aux_stack.append(values[i])
+                        if i < len(values) - 1:
+                            aux_stack.append(",")
+
+            aux_stack.append("}")
 
     def solidity(handler):
 
@@ -144,6 +158,7 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ImportDirective(node):
+        # TODO: more import syntax
         emit("import")
         emit(f'"{node.absolutePath}"')
         end_stmt()
@@ -156,93 +171,173 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ContractDefinition(node):
-        if node.abstract is True:  # abstract?
+        # abstract flag
+        if node.abstract is True:
             # For interface and library this's always False
             emit("abstract")
-        emit(node.contractKind)  # interface, contract or library
-        emit(node.name)  # contract name
-        if len(node.baseContracts) > 0:  # inheritance
+        # interface, contract or library
+        emit(node.contractKind)
+        # contract name
+        emit(node.name)
+        # inheritance
+        if len(node.baseContracts) > 0:
             emit("is")
-            emit_tuple(node.baseContracts)
-        emit_block(node.nodes)  # contract body
+            emit_tuple(node.baseContracts, paren=False)
+        # contract body
+        emit_block(node.nodes)
 
     @solidity
     def InheritanceSpecifier(node):
         emit(node.baseName)
 
-    if indent == 0:
-
-        @solidity
-        def VariableDeclarationStatement(node):
-            emit_tuple(node.declarations, "(")
-            emit("=")
-            emit(node.initialValue)
-            end_stmt()
-
-    else:
-
-        @solidity
-        def VariableDeclarationStatement(node):
-            emit_tuple(node.declarations, "(")
-            emit("=")
-            emit(node.initialValue)
-            caller = node.parent()
-            end_stmt(
-                line_break=not (
-                    caller.nodeType == "ForStatement"
-                    and node is caller.initializationExpression
-                )
-            )
+    @solidity
+    def UserDefinedValueTypeDefinition(node):
+        emit_many("type", node.name, "is", node.underlyingType)
+        end_stmt()
 
     @solidity
     def VariableDeclaration(node):
-        # variable type
-        emit(node.typeName)
-        # attributes
-        if hasattr(node, "constant") and node.constant is True:
-            emit("constant")
-        elif hasattr(node, "indexed") and node.indexed is True:
-            emit("indexed")
-        elif node.visibility != "internal":
-            emit(node.visibility)
-        if node.storageLocation != "default":
-            emit(node.storageLocation)
-        # variable name
-        if node.name != "":  # filter out anonymous variables
+
+        # state-variable-definition / constant-variable-definition
+        if (
+            node.parent().nodeType == "ContractDefinition"
+            or node.parent().nodeType == "SourceUnit"
+        ):
+            # type of the member, it's also a node
+            emit(node.typeName)
+            # constant-variable-definition check
+            if node.constant is True:
+                emit("constant")
+            # special attributes of state-variable-definition
+            else:
+                # public, private, internal, etc.
+                # no need to visualize default value "internal"
+                if hasattr(node, "visibility") and node.visibility != "internal":
+                    emit(node.visibility)
+                # immutable flag
+                if node.mutability == "immutable":
+                    emit("immutable")
+                # state variable location, default or transient
+                elif node.storageLocation != "default":
+                    emit(node.storageLocation)
+                # overrides any prototype?
+                if hasattr(node, "overrides"):
+                    emit(node.overrides)
+            # name of the variable
             emit(node.name)
             # initial value
+            # Note that transient state variable has no initial value
             if hasattr(node, "value"):
                 emit("=")
                 emit(node.value)
-        # close the statement for state variable declaration
-        if node.parent().nodeType in ("ContractDefinition", "StructDefinition"):
             end_stmt()
+
+        # struct-member
+        elif node.parent().nodeType == "StructDefinition":
+            # type of the member, it's also a node
+            emit(node.typeName)
+            # name of the member
+            emit(node.name)
+            end_stmt()
+
+        # parameter
+        elif node.parent().nodeType == "ParameterList":
+            # type of the parameter, it's also a node
+            emit(node.typeName)
+            # indexed flag, for event parameter only
+            if hasattr(node, "indexed") and node.indexed is True:
+                emit("indexed")
+            # parameter location, memory, storage, calldata, etc.
+            if node.storageLocation != "default":
+                emit(node.storageLocation)
+            # name of the parameter
+            # Rule out anonymous variables
+            if len(node.name) > 0:
+                emit(node.name)
+            # We don't emit semicolons here
+
+        # other cases, i.e. variable declaration statement
+        else:
+            # type of the variable, it's also a node
+            emit(node.typeName)
+            # variable location, memory, storage, calldata, etc.
+            if node.storageLocation != "default":
+                emit(node.storageLocation)
+            # name of the variable
+            emit(node.name)
 
     @solidity
     def FunctionDefinition(node):
-        # function identifier
+
+        # constructor-definition
         if node.kind == "constructor":
             emit("constructor")
-        else:
+            # parameter list
+            emit(node.parameters)
+            # list of modifiers
+            if len(node.modifiers) > 0:
+                emit(node.modifiers)
+            # state mutability, can only be "payable" for constructors
+            if node.stateMutability == "payable":
+                emit("payable")
+            # Function body is a must for constructors
+            emit_block(node.nodes)
+
+        # function-definition
+        elif node.kind == "function" or node.kind == "freeFunction":
             emit_many("function", node.name)
-        # parameter list
-        emit(node.parameters)
-        # visibility
-        # Note that specify visibility for constructor is deprecated
-        if node.kind != "constructor":
-            emit(node.visibility)
-        # state mutability
-        if node.stateMutability != "nonpayable":
-            emit(node.stateMutability)
-        # is virtual
+            # parameter list
+            emit(node.parameters)
+            # Visibility is meaningless for free functions
+            # public, external, internal, etc.
+            if node.kind != "freeFunction":
+                emit(node.visibility)
+            # state mutability
+            # Do not visualize "nonpayable"
+            if node.stateMutability != "nonpayable":
+                emit(node.stateMutability)
+            # list of modifiers
+            if len(node.modifiers) > 0:
+                emit(node.modifiers)
+            # can be overridden?
+            if node.virtual is True:
+                emit("virtual")
+            # overrides any prototype?
+            if hasattr(node, "overrides"):
+                emit(node.overrides)
+            # return parameters
+            if len(node.returnParameters.parameters) > 0:
+                emit("returns")
+                emit(node.returnParameters)
+            # function body, could be empty or not implemented
+            if hasattr(node, "nodes"):
+                emit_block(node.nodes)
+            else:
+                end_stmt()
+
+        else:
+            logger.warning(f"Fix me: {node.kind} function is not supported yet!")
+
+    @solidity
+    def ModifierInvocation(node):
+        emit(node.modifierName)
+        emit_tuple(node.arguments)
+
+    @solidity
+    def OverrideSpecifier(node):
+        emit("override")
+        emit_tuple(node.overrides)
+
+    @solidity
+    def ModifierDefinition(node):
+        emit_many("modifier", node.name)
+        # can be overridden?
         if node.virtual is True:
             emit("virtual")
-        # TODO: modifiers
-        # return parameters
-        if len(node.returnParameters.parameters) > 0:
-            emit("returns")
-            emit(node.returnParameters)
-        # function body
+        # overrides any prototype?
+        if hasattr(node, "overrides"):
+            emit(node.overrides)
+        # modifier body, could be empty or not implemented
         if hasattr(node, "nodes"):
             emit_block(node.nodes)
         else:
@@ -250,27 +345,28 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ParameterList(node):
-        emit_tuple(node.parameters, "(")
+        emit_tuple(node.parameters)
 
     @solidity
     def EventDefinition(node):
         emit("event")
         emit(node.name)
         emit(node.parameters)
+        # is anonymous?
+        if node.anonymous is True:
+            emit("anonymous")
         end_stmt()
 
     @solidity
     def ErrorDefinition(node):
-        emit("error")
-        emit(node.name)
-        emit(node.parameters)
+        emit_many("error", node.name, node.parameters)
         end_stmt()
 
     @solidity
     def EnumDefinition(node):
         emit("enum")
         emit(node.name)
-        emit_tuple(node.members, style="{", line_break=True)
+        emit_dict(values=node.members, keys=None, line_break=True)
 
     @solidity
     def EnumValue(node):
@@ -292,7 +388,7 @@ def node2src(root, indent=0) -> str:
             if node.parent().nodeType == "ElementaryTypeNameExpression":
                 # Handle address in expression differently, if its a payable
                 # address, use 'payable' instead of 'address payable' as
-                # specified in official documentation.
+                # specified in official documentation
                 emit("payable")
             else:
                 emit_many(node.name, "payable")
@@ -305,10 +401,10 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ArrayTypeName(node):
-        emit(node.baseType)
-        emit("[")
-        # TODO: fixed length array
-        emit("]")
+        if hasattr(node, "length"):
+            emit_many(node.baseType, "[", node.length, "]")
+        else:
+            emit_many(node.baseType, "[]")
 
     @solidity
     def IdentifierPath(node):
@@ -319,8 +415,33 @@ def node2src(root, indent=0) -> str:
         emit_many("mapping", "(", node.keyType, "=>", node.valueType, ")")
 
     @solidity
+    def PlaceholderStatement(node):
+        emit("_")
+        end_stmt()
+
+    @solidity
+    def VariableDeclarationStatement(node):
+        if len(node.declarations) > 1:
+            emit_tuple(node.declarations)
+        else:
+            emit(node.declarations[0])
+        emit("=")
+        emit(node.initialValue)
+        caller = node.parent()
+        # Special case in for statement:
+        # Variable declaration statement is used as an expression
+        if (
+            caller.nodeType == "ForStatement"
+            and node is caller.initializationExpression
+        ):
+            return
+        end_stmt()
+
+    @solidity
     def ExpressionStatement(node):
         emit(node.expression)
+        # Special case in for statement:
+        # Expression statement is used as an expression
         caller = node.parent()
         if caller.nodeType == "ForStatement" and node is caller.loopExpression:
             return
@@ -329,17 +450,30 @@ def node2src(root, indent=0) -> str:
     @solidity
     def EmitStatement(node):
         # function emit() has nothing to do with solidity's emit statement!
-        emit("emit")
-        emit(node.eventCall)
+        emit_many("emit", node.eventCall)
+        end_stmt()
+
+    @solidity
+    def RevertStatement(node):
+        emit_many("revert", node.errorCall)
         end_stmt()
 
     @solidity
     def IfStatement(node):
-        emit("if")
-        emit_many("(", node.condition, ")")
-        emit_block(node.trueBody, not hasattr(node, "falseBody"))
-        if hasattr(node, "falseBody"):
+        emit_many("if", "(", node.condition, ")")
+
+        # Check if else branch present
+        has_else = hasattr(node, "falseBody")
+        # trueBody can be a list of nodes or a normal node
+        if isinstance(node.trueBody, list) or isinstance(node.trueBody, tuple):
+            # Do not insert line break if there's an else branch
+            emit_block(node.trueBody, continuous=has_else)
+        else:
+            emit(node.trueBody)
+
+        if has_else:
             emit("else")
+            # falseBody can be a list of nodes or a normal node
             if isinstance(node.falseBody, list) or isinstance(node.falseBody, tuple):
                 emit_block(node.falseBody)
             else:
@@ -347,10 +481,11 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def ForStatement(node):
-        emit("for")
         emit_many(
+            "for",
             "(",
             node.initializationExpression,
+            ";",
             node.condition,
             ";",
             node.loopExpression,
@@ -360,20 +495,42 @@ def node2src(root, indent=0) -> str:
 
     @solidity
     def WhileStatement(node):
-        emit("while")
-        emit_many("(", node.condition, ")")
+        emit_many("while", "(", node.condition, ")")
         emit_block(node.nodes)
 
     @solidity
-    def Return(node):
-        emit("return")
-        emit(node.expression)
+    def DoWhileStatement(node):
+        emit("do")
+        emit_block(node.nodes, continuous=True)
+        emit_many("while", "(", node.condition, ")")
         end_stmt()
 
     @solidity
-    def FunctionCall(n):
-        emit(n.expression)
-        emit_tuple(n.arguments, "(")
+    def Return(node):
+        emit_many("return", node.expression)
+        end_stmt()
+
+    @solidity
+    def Break(node):
+        emit("break")
+        end_stmt()
+
+    @solidity
+    def TupleExpression(node):
+        emit_tuple(node.components)
+
+    @solidity
+    def Continue(node):
+        emit("continue")
+        end_stmt()
+
+    @solidity
+    def FunctionCall(node):
+        emit(node.expression)
+        if len(node.names) > 0:
+            emit_dict(values=node.arguments, keys=node.names, line_break=False)
+        else:
+            emit_tuple(node.arguments)
 
     @solidity
     def MemberAccess(node):
@@ -382,6 +539,17 @@ def node2src(root, indent=0) -> str:
     @solidity
     def IndexAccess(node):
         emit_many(node.baseExpression, "[", node.indexExpression, "]")
+
+    @solidity
+    def IndexRangeAccess(node):
+        emit(node.baseExpression)
+        emit("[")
+        if hasattr(node, "startExpression"):
+            emit(node.startExpression)
+        emit(":")
+        if hasattr(node, "endExpression"):
+            emit(node.endExpression)
+        emit("]")
 
     @solidity
     def UnaryOperation(node):
@@ -426,30 +594,46 @@ def node2src(root, indent=0) -> str:
         emit(n.name)
 
     logger.debug("Converting syntax tree to source")
+
+    # To speed up pre-order visiting, we use stack-based iteration instead of
+    # recursion.
     pre_ord_stack.append(root)
+
     while len(pre_ord_stack) > 0:
         x = pre_ord_stack.pop()
+
+        # Pure string value, should send it directly to tokens
         if isinstance(x, str):
             if indent == 0:
                 add_token(x)
-            else:  # iff. indent is on
+            # iff. indent is on
+            else:
                 if new_line is True:
-                    if indent_level > 0:
-                        add_token(" " * indent_level)
+                    if shift > 0:
+                        add_token(" " * shift)
                     new_line = False
                 add_token(x)
-                if x == "\n":
+                if x.endswith("\n"):
                     new_line = True
+
+        # a node
+        # We need to split it into tokens and subnodes and put 'em back to stack
         elif hasattr(x, "nodeType"):
             handler = locals().get(x.nodeType)
             if handler is not None and hasattr(handler, "solidity"):
                 handler(x)
             else:
-                logger.warning(f"AST node {x.nodeType} is not supported yet!")
-        elif isinstance(x, int):  # iff. indent is on
-            indent_level += x * indent
-            if indent_level < 0:
-                indent_level = 0
+                logger.warning(f"Fix me: {x.nodeType} is not supported yet!")
+
+        # indentation number
+        # We need to set the current indentation level upon numbers
+        # iff. indent is on
+        elif isinstance(x, int):
+            shift += x * indent
+            if shift < 0:
+                shift = 0
+
+        # Undefined behaviors goes here
         else:
             logger.error(
                 f"Bad node {x}! Maybe the node is missing some key attributes?"

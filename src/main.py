@@ -10,6 +10,7 @@ from astUtils import node2src
 
 SOLC_VERSION = "0.8.28"
 
+#LOG_LEVEL = logging.INFO
 LOG_LEVEL = logging.DEBUG
 
 MODULES = [
