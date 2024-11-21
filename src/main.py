@@ -21,7 +21,8 @@ MODULES = [
     # example of adding and enabling cff.py
     # {"name": "cff", "enabled": True},
     {"name": "junkCode", "enabled": True},
-    {"name": "opaquePredicates", "enabled": True}
+    {"name": "opaquePredicates", "enabled": True},
+    {"name": "controlFlowFlatten", "enabled": True}
 ]
 
 parser = argparse.ArgumentParser()
