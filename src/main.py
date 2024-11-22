@@ -18,10 +18,10 @@ MODULES = [
     # all modules must implement function obfuscate() which takes a SourceUnit
     # node as input and returns a obfuscated SourceUnit node
     #
-    # example of adding and enabling cff.py
-    # {"name": "cff", "enabled": True},
-    {"name": "junkCode", "enabled": True},
-    {"name": "opaquePredicates", "enabled": True}
+    # example of adding and enabling controlFlowFlatten.py
+    # {"name": "controlFlowFlatten", "enabled": True},
+    {"name": "opaqueConstants", "enabled": True},
+    {"name": "opaquePredicates", "enabled": False}
 ]
 
 parser = argparse.ArgumentParser()

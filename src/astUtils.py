@@ -1,26 +1,127 @@
 import logging
 import string
+from copy import deepcopy
+from functools import partial
+from solcast.nodes import NodeBase, node_class_factory
 
 logger = logging.getLogger(__name__)
 
 GOOD_CHARS = string.ascii_letters + string.digits + "$_"
 
 
-def gen_for_stmt(init_expr, cond, loop_expr):
-    # TODO: reuseable for statement for obfuscate modules
-    pass
+fake_node = node_class_factory(
+    ast={"nodeType": "FakeNode", "src": "0:0:0", "fake": True}, parent=None
+)
 
 
-def gen_if_stmt(cond, true_body, false_body):
-    # TODO: reuseable if statement for obfuscate modules
-    pass
+def _bind(parent: NodeBase, child: NodeBase):
+    parent._children.add(child)
+    child._parent = parent
 
 
-def node2src(root: object, indent: int = 0) -> str:
+def identifier(name: str) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "Identifier"
+    x.name = name
+    return x
+
+
+def number(value: int) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "Literal"
+    x.kind = "number"
+    x.value = hex(value) if value > 255 else str(value)
+    return x
+
+
+def parentheses(sub_expr: NodeBase) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "TupleExpression"
+    x.components = [sub_expr]
+    _bind(x, sub_expr)
+    return x
+
+
+def binary_op(operator: str, left: NodeBase, right: NodeBase) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "BinaryOperator"
+    x.operator = operator
+
+    # Add parentheses to left expression and right expression
+    # TODO: priorities
+    if left.nodeType not in ("Literal", "Identifier"):
+        left = parentheses(left)
+
+    if right.nodeType not in ("Literal", "Identifier"):
+        right = parentheses(right)
+
+    x.leftExpression = left
+    x.rightExpression = right
+
+    _bind(x, left)
+    _bind(x, right)
+
+    return x
+
+
+def unary_op(operator: str, sub_expr: NodeBase) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "UnaryOperation"
+    x.operator = operator
+
+    # Add parentheses to left expression and right expression
+    # TODO: priorities
+    if sub_expr.nodeType not in ("Literal", "Identifier"):
+        sub_expr = parentheses(sub_expr)
+
+    x.subExpression = sub_expr
+    _bind(x, sub_expr)
+
+    return x
+
+
+SOL_ADD = partial(binary_op, operator="+")
+SOL_SUB = partial(binary_op, operator="-")
+SOL_MUL = partial(binary_op, operator="*")
+SOL_AND = partial(binary_op, operator="&")
+SOL_OR = partial(binary_op, operator="|")
+SOL_XOR = partial(binary_op, operator="^")
+SOL_NOT = partial(unary_op, operator="~")
+SOL_NEG = partial(unary_op, operator="-")
+# TODO: more operators
+
+
+def for_statement(init_expr: NodeBase, cond: NodeBase, loop_expr: NodeBase) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "ForStatement"
+    # TODO
+    return x
+
+
+def if_statement(
+    cond: NodeBase, true_body: NodeBase, false_body: NodeBase = None
+) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "IfStatement"
+    # TODO
+    return x
+
+
+def while_statement(cond: NodeBase, body: NodeBase, do=False):
+    x = deepcopy(fake_node)
+    if do is True:
+        x.nodeType = "DoWhileStatement"
+    else:
+        x.nodeType = "WhileStatement"
+    # TODO
+    return x
+
+
+def node2src(root: NodeBase, indent: int = 0) -> str:
     """
-    Convert a *SourceUnit* AST node to solidity source
+    Convert a *SourceUnit* AST node to solidity source code
     Parameters:
-        root (object): a *SourceUnit* AST node AKA. the root
+        root (NodeBase): a *SourceUnit* AST node A.K.A. the root
         indent (int): If this field is set to a positive value, indent will be
             turned on, otherwise we generate compact source code
     Returns:
@@ -183,12 +284,12 @@ def node2src(root: object, indent: int = 0) -> str:
 
     def solidity(handler):
         """
-        The decorator indicating a grammar handler
+        This decorator indicates a grammar handler
 
         Any function with this decorator handles an AST node
         """
 
-        def wrapper(node, *args, **kwargs):
+        def solidity_wrapper(node, *args, **kwargs):
             nonlocal aux_stack
 
             try:
@@ -205,9 +306,9 @@ def node2src(root: object, indent: int = 0) -> str:
                 item = aux_stack.pop()
                 pre_ord_stack.append(item)
 
-        wrapper.solidity = True
-        return wrapper
-    
+        solidity_wrapper.solidity = True
+        return solidity_wrapper
+
     #####################################
     # Grammar handlers are defined here #
     #####################################
