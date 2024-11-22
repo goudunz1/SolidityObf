@@ -5,6 +5,9 @@ contract PrimeChecker {
         if (number <= 1) {
             return false;
         }
+        else{
+            return false;
+        }
         uint256 divisor = 10;
         uint256 h = 5;
         while (divisor > 0) {

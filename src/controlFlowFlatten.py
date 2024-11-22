@@ -28,29 +28,51 @@ def create_CFgraph(root: TreeNode):
     expList = []
     childList = []
     if root.nodeType == "root":
-        for n in root.value.nodes:
+        try:
+            for n in root.value.nodes:
+                if n.nodeType == "IfStatement":
+                    child = TreeNode(n)
+                    child.index = Index
+                    child.nodeType = "IF"
+                    childList.append(child)
+                    Index += 1
+                    if "trueBody" in n.fields:
+                        c1 = TreeNode(n.trueBody)
+                        c1.index = Index
+                        c1.nodeType = "tbody"
+                        child.add_child(c1)
+                        Index += 1
+                        create_CFgraph(c1)
+                    if "falseBody" in n.fields:
+                        c2 = TreeNode(n.falseBody)
+                        c2.index = Index
+                        c2.nodeType = "fbody"
+                        child.add_child(c2)
+                        Index += 1
+                        create_CFgraph(c2)
+                else:
+                    expList.append(n)
+        except:
+            n = root.value
             if n.nodeType == "IfStatement":
-                child = TreeNode(n)
-                child.index = Index
-                child.nodeType = "IF"
-                childList.append(child)
+                root.index = Index
+                root.nodeType = "IF"
                 Index += 1
                 if "trueBody" in n.fields:
                     c1 = TreeNode(n.trueBody)
                     c1.index = Index
                     c1.nodeType = "tbody"
-                    child.add_child(c1)
+                    root.add_child(c1)
                     Index += 1
                     create_CFgraph(c1)
                 if "falseBody" in n.fields:
                     c2 = TreeNode(n.falseBody)
                     c2.index = Index
                     c2.nodeType = "fbody"
-                    child.add_child(c2)
+                    root.add_child(c2)
                     Index += 1
                     create_CFgraph(c2)
-            else:
-                expList.append(n)
+
     elif root.nodeType in ("tbody", "fbody"):
         for n in root.value:
             if n.nodeType == "IfStatement":
@@ -73,27 +95,29 @@ def create_CFgraph(root: TreeNode):
                     create_CFgraph(c2)
             else:
                 expList.append(n)
-    child = TreeNode(expList)
-    child.nodeType = "expList"
-    childList.append(child)
+    if len(expList) != 0:
+        child = TreeNode(expList)
+        child.nodeType = "expList"
+        childList.append(child)
     for i,children in enumerate(childList):
         root.add_child(children)
         for j in range(len(childList)):
             if i != j:
                 children.add_sibling(childList[j])
-        #children.add_sibling(childList[j] for j in range(len(childList)) if i != j)
-        #print(children.siblings)
-    if len(root.children) > 1:
-        child.index = Index
-        Index += 1
+    try:
+        if len(root.children) > 1:
+            child.index = Index
+            Index += 1
+    except:
+        pass
     return
 
 # 从控制流图中提取基本块
 def extractBlockFromTree(node, block_list, level=0):
-    if node.index >= 0:
+    if node.index >= 0 :
         block_list.append(node)
     # 打印当前节点
-    print('  ' * level ,node ,node.index)
+    #print('  ' * level ,node ,node.index)
     # 递归打印子节点
     for child in node.children:
         block_list = extractBlockFromTree(child, block_list, level + 1)
@@ -102,11 +126,10 @@ def extractBlockFromTree(node, block_list, level=0):
 def obfuscate(node):
     global Index
     # 查询while节点(可能有多个) 
-    while_Nodes = find_WhileStatement(node[1])
-    print(while_Nodes)
+    while_Nodes = find_While_and_If_Statement(node[1], )
+    #print(while_Nodes)
     statenumber = 0
     for while_Node in while_Nodes:
-        print("wocao:",while_Node)
         parent = while_Node.parent() # 父节点
         
         # 创建state状态变量，插入到控制流之前
@@ -123,7 +146,7 @@ def obfuscate(node):
         # 提取基本块
         block_list = []
         extractBlockFromTree(root, block_list)
-        print(block_list)    
+        #print("+++++:",block_list)    
 
         # 根据基本块及控制流图进行ControlFlow_Flatten
         node_list = []
@@ -208,12 +231,17 @@ def obfuscate(node):
             node_list.append(if1)
         
         # 向while节点中添加
-        while_Node.nodes = node_list
+        if while_Node.nodeType == "WhileStatement":
+            while_Node.nodes = node_list
+        else:
+            index = parent.nodes.index(while_Node)
+            parent.nodes[index:index] = node_list
 
         # 重置stateNumber
-        statenumber = 0
+        statenumber += 1 
         # 重置index
         Index = 0
+    
     return node
 
 # 给定一个节点，查询该节点祖先的兄弟节点，如果有某个兄弟节点是Expression类型的话，则返回该兄弟节点的index
@@ -224,7 +252,7 @@ def get_sibling_index(node: TreeNode):
                 return i.index
         node = node.parent
 
-# 获取while循环的条件
+# 获取while循环的条件(not used)
 def get_BinaryOperation_code(while_Node):
     def get_condition(condition):
         if condition.nodeType == "BinaryOperation":
@@ -244,17 +272,18 @@ def get_BinaryOperation_code(while_Node):
     return condition_expression
 
 # 查询所有while语句
-def find_WhileStatement(node, while_nodes=None):
+def find_While_and_If_Statement(node, while_nodes=None):
     if while_nodes is None:
         while_nodes = []
-
     try:
         if node.nodes:
             for element in node.nodes:
-                if element.nodeType == "WhileStatement":
+                if element.nodeType in ("WhileStatement", "IfStatement"):
+                    if element.nodeType == "IfStatement" and element.parent().nodeType == "WhileStatement":
+                        continue
                     while_nodes.append(element)
                 # 递归调用自身，以便在子节点中查找更多的 WhileStatement
-                find_WhileStatement(element, while_nodes)
+                find_While_and_If_Statement(element, while_nodes)
     except:
         return while_nodes
 
