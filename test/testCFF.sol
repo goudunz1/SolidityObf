@@ -21,6 +21,21 @@ contract PrimeChecker {
             divisor = divisor - 1;
             
         }
+
+        while (divisor > 0) {
+            if (divisor > 5) {
+                if(h>2){
+                    h = h+2;
+                }
+                h = h+1;
+                h = h + 1;
+            }
+            else {
+                h = h - 1 ;
+            }
+            divisor = divisor - 1;
+            
+        }
         return true;
     }
 }

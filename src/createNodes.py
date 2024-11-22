@@ -1,6 +1,6 @@
 from solcast.nodes import NodeBase
 
-def createVariable(variable_dict):
+def createVariable(variable_dict, parent=None):
     ast = {
             "assignments": [
                             16
@@ -54,10 +54,10 @@ def createVariable(variable_dict):
             "nodeType": "VariableDeclarationStatement",
             "src": "0:0:0"
     }
-    return NodeBase(ast, None)
+    return NodeBase(ast, parent)
 
 # 创建If语句
-def createIfStatement():
+def createIfStatement(parent=None):
     # 可以先不填truebody及falsebody，设置statements，后面再填
     ast = {
             "condition": {
@@ -77,10 +77,10 @@ def createIfStatement():
             "nodeType": "IfStatement",
             "src": "0:0:0"                 
     }
-    return NodeBase(ast, None)
+    return NodeBase(ast, parent)
 
 
-def createBinaryOperation(binaryStatement_dict):
+def createBinaryOperation(binaryStatement_dict, parent=None):
     if isinstance(binaryStatement_dict["left"], str):
         left = createIdentifier(binaryStatement_dict["left"])
     elif isinstance(binaryStatement_dict["left"], int):
@@ -111,12 +111,12 @@ def createBinaryOperation(binaryStatement_dict):
                 "typeString": "bool"
             }
     }
-    binary_opt = NodeBase(ast, None)
+    binary_opt = NodeBase(ast, parent)
     binary_opt.leftExpression = left
     binary_opt.rightExpression = right
     return binary_opt
 
-def createLiteral(value):
+def createLiteral(value, parent=None):
     ast = {
         "hexValue": "35",
         "id": 27,
@@ -133,9 +133,9 @@ def createLiteral(value):
         },
         "value": value
     }
-    return NodeBase(ast, None)
+    return NodeBase(ast, parent)
 
-def createIdentifier(name):
+def createIdentifier(name, parent=None):
     ast = {
         "id": 26,
         "name": name,
@@ -148,9 +148,9 @@ def createIdentifier(name):
         "typeString": "uint256"
         }
     }
-    return NodeBase(ast, None)
+    return NodeBase(ast, parent)
 
-def createEpression(exp_dict):
+def createEpression(exp_dict, parent=None):
     ast = { 
                       "expression": {
                         "id": 11,
@@ -198,7 +198,7 @@ def createEpression(exp_dict):
                       "nodeType": "ExpressionStatement",
                       "src": "388:15:0"                   
     }
-    return NodeBase(ast, None)
+    return NodeBase(ast, parent)
     
 '''
 binary_opt = {"left":"test", "operator":"+", "right": 5}
