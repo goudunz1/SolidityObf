@@ -6,7 +6,8 @@ from solcast.nodes import NodeBase, node_class_factory
 
 logger = logging.getLogger(__name__)
 
-GOOD_CHARS = string.ascii_letters + string.digits + "$_"
+AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
+AZazdollar_ = string.ascii_letters + "$_"
 
 
 fake_node = node_class_factory(
@@ -14,18 +15,26 @@ fake_node = node_class_factory(
 )
 
 
-def _bind(parent: NodeBase, child: NodeBase):
+def bind(parent: NodeBase, child: NodeBase):
+    # TODO depth? baseNodeType? ...
     parent._children.add(child)
     child._parent = parent
 
 
-def identifier(name: str) -> NodeBase:
+def unbind(parent: NodeBase, child: NodeBase):
+    # TODO position
+    parent._children.remove(child)
+    child._parent = None
+
+
+def ident(name: str) -> NodeBase:
     x = deepcopy(fake_node)
     x.nodeType = "Identifier"
     x.name = name
     return x
 
 
+# TODO fixed number
 def number(value: int) -> NodeBase:
     x = deepcopy(fake_node)
     x.nodeType = "Literal"
@@ -34,32 +43,32 @@ def number(value: int) -> NodeBase:
     return x
 
 
-def parentheses(sub_expr: NodeBase) -> NodeBase:
+def paren(sub_expr: NodeBase) -> NodeBase:
     x = deepcopy(fake_node)
     x.nodeType = "TupleExpression"
     x.components = [sub_expr]
-    _bind(x, sub_expr)
+    bind(x, sub_expr)
     return x
 
 
 def binary_op(operator: str, left: NodeBase, right: NodeBase) -> NodeBase:
     x = deepcopy(fake_node)
-    x.nodeType = "BinaryOperator"
+    x.nodeType = "BinaryOperation"
     x.operator = operator
 
     # Add parentheses to left expression and right expression
     # TODO: priorities
     if left.nodeType not in ("Literal", "Identifier"):
-        left = parentheses(left)
+        left = paren(left)
 
     if right.nodeType not in ("Literal", "Identifier"):
-        right = parentheses(right)
+        right = paren(right)
 
     x.leftExpression = left
     x.rightExpression = right
 
-    _bind(x, left)
-    _bind(x, right)
+    bind(x, left)
+    bind(x, right)
 
     return x
 
@@ -72,33 +81,83 @@ def unary_op(operator: str, sub_expr: NodeBase) -> NodeBase:
     # Add parentheses to left expression and right expression
     # TODO: priorities
     if sub_expr.nodeType not in ("Literal", "Identifier"):
-        sub_expr = parentheses(sub_expr)
+        sub_expr = paren(sub_expr)
 
     x.subExpression = sub_expr
-    _bind(x, sub_expr)
+    bind(x, sub_expr)
 
     return x
 
 
-SOL_ADD = partial(binary_op, operator="+")
-SOL_SUB = partial(binary_op, operator="-")
-SOL_MUL = partial(binary_op, operator="*")
-SOL_AND = partial(binary_op, operator="&")
-SOL_OR = partial(binary_op, operator="|")
-SOL_XOR = partial(binary_op, operator="^")
-SOL_NOT = partial(unary_op, operator="~")
-SOL_NEG = partial(unary_op, operator="-")
+SOL_ADD = partial(binary_op, "+")
+SOL_SUB = partial(binary_op, "-")
+SOL_MUL = partial(binary_op, "*")
+SOL_AND = partial(binary_op, "&")
+SOL_OR = partial(binary_op, "|")
+SOL_XOR = partial(binary_op, "^")
+SOL_NOT = partial(unary_op, "~")
+SOL_NEG = partial(unary_op, "-")
+SOL_LSH = partial(binary_op, "<<")
+SOL_RSL = partial(binary_op, ">>")
+SOL_RSA = partial(binary_op, ">>>")
 # TODO: more operators
 
 
-def for_statement(init_expr: NodeBase, cond: NodeBase, loop_expr: NodeBase) -> NodeBase:
+def elementary(name: str) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "ElementaryTypeName"
+    x.name = name
+    return x
+
+
+def elementary_expr(name: str) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "ElementaryTypeNameExpression"
+    x.typeName = elementary(name)
+    bind(x, x.typeName)
+    return x
+
+
+def type_conv(type_name: str, expr: NodeBase) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "FunctionCall"
+    x.expression = elementary_expr(type_name)
+    bind(x, x.expression)
+    x.arguments = [expr]
+    x.names = []
+    bind(x, expr)
+    return x
+
+
+def var_dec(name: str, value: int, const=False) -> NodeBase:
+    x = deepcopy(fake_node)
+    x.nodeType = "VariableDeclaration"
+
+    x.typeName = elementary("int")
+    bind(x, x.typeName)
+
+    if const is True:
+        x.constant = True
+    else:
+        x.storageLocation = "default"
+    # TODO more fields
+
+    x.name = name
+
+    x.value = number(value)
+    bind(x, x.value)
+
+    return x
+
+
+def for_stmt(init_expr: NodeBase, cond: NodeBase, loop_expr: NodeBase) -> NodeBase:
     x = deepcopy(fake_node)
     x.nodeType = "ForStatement"
     # TODO
     return x
 
 
-def if_statement(
+def if_stmt(
     cond: NodeBase, true_body: NodeBase, false_body: NodeBase = None
 ) -> NodeBase:
     x = deepcopy(fake_node)
@@ -107,7 +166,7 @@ def if_statement(
     return x
 
 
-def while_statement(cond: NodeBase, body: NodeBase, do=False):
+def while_stmt(cond: NodeBase, body: NodeBase, do=False):
     x = deepcopy(fake_node)
     if do is True:
         x.nodeType = "DoWhileStatement"
@@ -115,6 +174,37 @@ def while_statement(cond: NodeBase, body: NodeBase, do=False):
         x.nodeType = "WhileStatement"
     # TODO
     return x
+
+
+def infect(node: NodeBase, new_node: NodeBase):
+    parent = node._parent
+    if parent is None:
+        return
+
+    found = False
+    # Locate node in its parent and set new_node to the exactly same position
+    for attr in dir(parent):
+        if attr.startswith("_"):
+            continue
+
+        obj = getattr(parent, attr)
+        if isinstance(obj, list):
+            try:
+                idx = obj.index(node)
+                obj[idx] = new_node
+                break
+            except:
+                continue
+        elif obj == node:
+            setattr(parent, attr, new_node)
+            break
+    else:
+        # Cannot locate node in parent???
+        logger.error(f"Bad node {parent} that binds a non-attribute child!")
+
+    # We should also update parental relationship for new node
+    unbind(parent, node)
+    bind(parent, new_node)
 
 
 def node2src(root: NodeBase, indent: int = 0) -> str:
@@ -142,10 +232,10 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
 
         nonlocal tokens
 
-        if len(tokens) > 1:
+        if len(tokens) >= 1:
             last = tokens[-1]
             # Insert separator (space) only when necessary
-            if x[0] in GOOD_CHARS and last[-1] in GOOD_CHARS:
+            if x[0] in AZaz09dollar_ and last[-1] in AZaz09dollar_:
                 tokens.append(" ")
         tokens.append(token)
 
@@ -321,6 +411,8 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
             emit("\n")  # This is necessary and has nothing to do with indent
         emit(node.nodes)
 
+    # TODO using definition
+
     @solidity
     def ImportDirective(node):
         # TODO: more import syntax
@@ -365,8 +457,8 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
 
         # state-variable-definition / constant-variable-definition
         if (
-            node.parent().nodeType == "ContractDefinition"
-            or node.parent().nodeType == "SourceUnit"
+            node._parent.nodeType == "ContractDefinition"
+            or node._parent.nodeType == "SourceUnit"
         ):
             # type of the member, it's also a node
             emit(node.typeName)
@@ -398,7 +490,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
             end_stmt()
 
         # struct-member
-        elif node.parent().nodeType == "StructDefinition":
+        elif node._parent.nodeType == "StructDefinition":
             # type of the member, it's also a node
             emit(node.typeName)
             # name of the member
@@ -406,7 +498,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
             end_stmt()
 
         # parameter
-        elif node.parent().nodeType == "ParameterList":
+        elif node._parent.nodeType == "ParameterList":
             # type of the parameter, it's also a node
             emit(node.typeName)
             # indexed flag, for event parameter only
@@ -548,7 +640,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
     @solidity
     def ElementaryTypeName(node):
         if hasattr(node, "stateMutability") and node.stateMutability == "payable":
-            if node.parent().nodeType == "ElementaryTypeNameExpression":
+            if node._parent.nodeType == "ElementaryTypeNameExpression":
                 # Handle address in expression differently, if its a payable
                 # address, use 'payable' instead of 'address payable' as
                 # specified in official documentation
@@ -590,7 +682,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
             emit(node.declarations[0])
         emit("=")
         emit(node.initialValue)
-        caller = node.parent()
+        caller = node._parent
         # Special case in for statement:
         # Variable declaration statement is used as an expression
         if (
@@ -605,7 +697,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         emit(node.expression)
         # Special case in for statement:
         # Expression statement is used as an expression
-        caller = node.parent()
+        caller = node._parent
         if caller.nodeType == "ForStatement" and node is caller.loopExpression:
             return
         end_stmt()
@@ -691,7 +783,9 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
     def FunctionCall(node):
         emit(node.expression)
         if len(node.names) > 0:
+            emit("(")  # Add parentheses manually since emit_dict() does not
             emit_dict(values=node.arguments, keys=node.names, line_break=False)
+            emit(")")
         else:
             emit_tuple(node.arguments)
 
