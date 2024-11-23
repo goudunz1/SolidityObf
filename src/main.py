@@ -5,9 +5,10 @@ from importlib import import_module
 from packaging import version
 import logging
 import time
-
+from solcx import set_solc_version
 from astUtils import node2src
 
+set_solc_version('0.8.28')
 SOLC_VERSION = "0.8.28"
 
 #LOG_LEVEL = logging.INFO
@@ -20,7 +21,8 @@ MODULES = [
     #
     # example of adding and enabling controlFlowFlatten.py
     # {"name": "controlFlowFlatten", "enabled": True},
-    {"name": "opaqueConstants", "enabled": True},
+    {"name": "controlFlowFlatten", "enabled": False},
+    {"name": "opaqueConstants", "enabled": False},
     {"name": "opaquePredicates", "enabled": False}
 ]
 
@@ -100,7 +102,7 @@ def main():
             solc_options, allow_paths=os.path.dirname(output_path)
         )
     except Exception as e:
-        logger.error(f"Compilation error, check your input file path")
+        logger.error(f"Compilation error, check your input file path{e}")
         return
 
     # with open("english_auction.json", "w", encoding="utf-8") as json_file:
@@ -133,7 +135,6 @@ def main():
 
             # we're calling module.obfuscate() here
             node_obf = module.obfuscate(node_obf)
-
     # convert and compress to source code
     if LOG_LEVEL == logging.DEBUG:
         source_obf = node2src(node_obf, indent=2)
