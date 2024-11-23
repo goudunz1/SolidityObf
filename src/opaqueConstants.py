@@ -1,6 +1,7 @@
 import logging
 import random
-import os
+from collections import deque
+from math import gcd
 from gmpy2 import gcdext
 from solcast.nodes import NodeBase
 
@@ -8,41 +9,47 @@ from astUtils import *
 
 logger = logging.getLogger(__name__)
 
-uint256 = lambda x: x % (1 << 256)
-uint128 = lambda x: x % (1 << 128)
-uint64 = lambda x: x % (1 << 64)
-uint32 = lambda x: x % (1 << 32)
-uint16 = lambda x: x % (1 << 16)
-uint8 = lambda x: x % (1 << 8)
+mask = lambda x: (1 << x) - 1  # 0x1111_1111_...
 
-OPAQUE0 = set(
+
+def random_number(bits: int = 128) -> int:
+    return random.randint(1 << (bits - 2), (1 << (bits - 1)) - 1)
+
+
+def random_name(length: int = 16) -> str:
+    start = random.choice(AZazdollar_)
+    return start + "".join(random.sample(AZaz09dollar_, length - 1))
+
+
+OPAQUE0 = (
     # xor: x^y == x&~y|~x&y
     lambda x_name, x, y_name, y: SOL_SUB(
-        SOL_XOR(identifier(x_name), identifier(y_name)),
+        SOL_XOR(ident(x_name), ident(y_name)),
         SOL_OR(
-            SOL_AND(identifier(x_name), SOL_NOT(identifier(y_name))),
-            SOL_AND(SOL_NOT(identifier(x_name)), identifier(y_name)),
+            SOL_AND(ident(x_name), SOL_NOT(ident(y_name))),
+            SOL_AND(SOL_NOT(ident(x_name)), ident(y_name)),
         ),
     ),
     # De Morgan's law: ~x|y == ~(x&~y)
     lambda x_name, x, y_name, y: SOL_SUB(
-        SOL_OR(SOL_NOT(identifier(x_name)), identifier(y_name)),
-        SOL_NOT(SOL_AND(identifier(x_name), SOL_NOT(identifier(y_name)))),
+        SOL_OR(SOL_NOT(ident(x_name)), ident(y_name)),
+        SOL_NOT(SOL_AND(ident(x_name), SOL_NOT(ident(y_name)))),
     ),
     # Feel free to add more!
 )
 
 
-def opaque_int(m: int, x_name: str, x: int, y_name: str, y: int) -> NodeBase:
+def opaque_int(
+    m: int, x_name: str, x: int, y_name: str, y: int, bits: int = 128
+) -> NodeBase:
     """
     Generate a opaque integer of value m with linear combination of x and y
     based on Bezout's theorem
 
-    We assume that x and y are positive coprime integers with 255 bits and
-    |x-y| > 1
+    We assume that x and y are positive coprime integers with 127 bits
     """
 
-    if x < (1 << 255) or y < (1 << 255) or x == y or x == y + 1 or x == y - 1:
+    if gcd(x, y) != 1:
         raise ValueError(
             f"opaque const generation: bad x, y value {hex(x)} and {hex(y)}"
         )
@@ -55,13 +62,8 @@ def opaque_int(m: int, x_name: str, x: int, y_name: str, y: int) -> NodeBase:
 
     # When m is not zero, we're trying to find two const *aa* and *bb* that
     # aa*xx - bb*yy = m or bb*yy - aa*xx = m
-    # If aa*xx - bb*yy has a different sign with m, we use bb*yy - aa*xx
+    # If aa*xx - bb*yy equals to -1, we use bb*yy - aa*xx
     sign = True
-
-    if m < 0:
-        m = -m  # We calculate aa and bb with positive integers
-        sign = not sign
-
     _, a, b = gcdext(x, y)
     a, b = int(a), int(b)
 
@@ -75,46 +77,29 @@ def opaque_int(m: int, x_name: str, x: int, y_name: str, y: int) -> NodeBase:
             f"opaque const generation: bad x, y value {hex(x)} and {hex(y)}"
         )
 
-    k = random.randint(0, (1 << 256) - 1)
-    # (m*a+k*y)*x - (m*b+k*x)*y = m*(a*x - b*y)
-    aa = uint256(m * a + k * y)
-    bb = uint256(m * b + k * x)
+    k = random_number(bits)
+    # (m*a + k*y)*x - (m*b + k*x)*y = m*(a*x - b*y)
+    aa = (m * a + k * y) & mask(bits)
+    bb = (m * b + k * x) & mask(bits)
 
     # sign is inverted twice or not inverted, We have aa*xx - bb*yy = m
     if sign is True:
-        return SOL_SUB(
-            SOL_MUL(number(aa), identifier(x_name)),
-            SOL_MUL(number(bb), identifier(y_name)),
+        expr = SOL_SUB(
+            SOL_MUL(number(aa), ident(x_name)),
+            SOL_MUL(number(bb), ident(y_name)),
         )
     # sign is inverted once, We have aa*xx - bb*yy = -m
     else:
-        return SOL_SUB(
-            SOL_MUL(number(bb), identifier(y_name)),
-            SOL_MUL(number(aa), identifier(x_name)),
+        expr = SOL_SUB(
+            SOL_MUL(number(bb), ident(y_name)),
+            SOL_MUL(number(aa), ident(x_name)),
         )
 
+    return expr
 
-def opaque_const(node: NodeBase, const_pool: dict = {}):
-    # node has to be a function
 
-    # Step 1: bfs,
-    #   stopping at expressions that has a typeString of
-    #   "int_const <value>" or
-    #   "rational_const <value>" (TODO)
-
-    # Step2: determine a group of random labels and assign a random value to it
-    # then generate random arithmetic expression uses those labels that equals
-    # to <value>
-    # we have to add TupleExpressions at proper positions
-    # TODO: label name conflict
-
-    # Step3: we have to add a explicit type conversion to make it valid,
-    # after that, we infect the original node with our new node.
-    # special: if <value> is 0 or 1, use quick/fixed expressions like
-    # (x&x)-(x|x)-(x^x)
-
-    # Step4: generate aux const def at beginning of the function
-    # i.e. int sPofS3x=0x1234abcd; int aSjkdU=0xccddeeff;
+def opaque_fixed() -> NodeBase:
+    # TODO opaque fixed
     pass
 
 
@@ -130,45 +115,92 @@ def obfuscate(node: NodeBase) -> NodeBase:
 
     logger.debug(f"Applying opaque constant obfuscation on {node}")
 
-    const_pool = {}
-
     if node.nodeType != "SourceUnit":
         return node
 
-    # do for each function
-    for x in node.nodes:
-        if x.nodeType == "VariableDeclaration":
-            if x.constant is True and hasattr(x, "value"):
-                type_string = x.value.typeDescriptions["typeString"]
-                if type_string.startswith("int_const"):
-                    name = x.name
-                    value = type_string.split()[1]
-                    const_pool[name] = value
-                else:
-                    # TODO: in this case, value can also be determined
-                    pass
-        elif x.nodeType == "ContractDefinition":
-            local_const_pool = const_pool.copy()
-            for y in x.nodes:
-                if x.nodeType == "VariableDeclaration":
-                    if x.constant is True and hasattr(x, "value"):
-                        type_string = x.value.typeDescriptions["typeString"]
-                        if type_string.startswith("int_const"):
-                            name = x.name
-                            value = type_string.split()[1]
-                            local_const_pool[name] = value
+    # Generate const_x with a random name at beginning of the contract
+    x, y = random_number(), random_number()
+    while gcd(x, y) != 1:
+        y = random_number()
+    x_name, y_name = random_name(), random_name()  # TODO: label name conflict
+    x_dec, y_dec = var_dec(x_name, x, const=True), var_dec(y_name, y, const=True)
+    idx = 0
+    for n in node.nodes:
+        if n.nodeType in ("PragmaDirective", "UsingDirective", "ImportDirective"):
+            idx += 1
+        else:
+            break
+    node.nodes[idx:idx] = x_dec, y_dec
+    bind(node, x_dec)
+    bind(node, y_dec)
+    # TODO how to defend against compiler optimization of "constant variables"
+
+    bfs_queue = deque([node])
+
+    while len(bfs_queue) > 0:
+        curr = bfs_queue.popleft()
+        # Order of the children does not matter, so we use the set _children
+        for n in curr._children:
+
+            # We're stopping at expressions that has a type identifier of
+            # *t_rational*
+            if (
+                hasattr(n, "typeDescriptions")
+                and "typeIdentifier" in n.typeDescriptions
+            ):
+                type_id = n.typeDescriptions["typeIdentifier"]
+                if type_id.startswith("t_rational"):
+                    # Normally, solc pre-compute values that can be determined
+                    # during compilation time, i.e. the expression (1+1)*(2-3)
+                    # will have type "t_rational_minus_2_by_1"
+                    parts = type_id.split("_")
+                    numerator = -int(parts[3]) if parts[2] == "minus" else int(parts[2])
+                    denominator = int(parts[-1])
+
+                    # integer
+                    if denominator == 1:
+                        value = numerator
+                        # We can represent *value* using 128 bits
+                        if (value >> 128) == 0:
+                            expr = opaque_int(value, x_name, x, y_name, y)
+                            # Note that there'll be junk values in the high
+                            # 128 bits of the result
+                            expr = SOL_AND(expr, number(mask(128)))
+                        # 128 bits, but negative
+                        elif (value >> 128) == -1:
+                            expr = opaque_int(value, x_name, x, y_name, y)
+                            # Because mask(128) << 128 can not be represented by
+                            # int256, we generate the expression (-1) << 128
+                            # instead
+                            expr = SOL_OR(
+                                expr, SOL_LSH(SOL_NEG(number(1)), number(128))
+                            )
+                        # We cannot represent *value* using 128 bits
                         else:
-                            # TODO: in this case, value can also be determined
-                            pass
+                            value_low = value & mask(128)
+                            value_high = value >> 128
+                            expr_low = opaque_int(value_low, x_name, x, y_name, y)
+                            expr_low = SOL_AND(expr_low, number(mask(128)))
+                            expr_high = opaque_int(value_high, x_name, x, y_name, y)
+                            expr = SOL_OR(expr_low, SOL_LSH(expr_high, number(128)))
+
+                        # Now expr holds a int that has the same bit
+                        # representation as *value*
+
+                        # TODO type conversion
+                        expr = type_conv("uint", expr)
+                        # TODO special: sub-denomination? function call?
+
+                        infect(n, expr)
+
+                    # fixed
                     else:
-                        # TODO: what about immutable variables?
+                        # TODO
                         pass
-                if (
-                    x.nodeType == "FunctionDefinition"
-                    or x.nodeType == "ModifierDefinition"
-                ):
-                    opaque_const(x, local_const_pool)
-        elif x.nodeType == "FunctionDefinition":
-            opaque_const(x, const_pool=const_pool)
+
+                    continue
+
+            # Otherwise, add the node to bfs queue and continue the loop
+            bfs_queue.append(n)
 
     return node
