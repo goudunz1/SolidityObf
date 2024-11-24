@@ -12,6 +12,7 @@ AZazdollar_ = string.ascii_letters + "$_"
 
 fake_id = -1
 
+
 def fake_ast(**kwargs) -> dict:
     global fake_id
 
@@ -25,7 +26,9 @@ def fake_ast(**kwargs) -> dict:
     return ast
 
 
-def as_node(parent: NodeBase, ast: dict, at: str, list_idx: int | None = None):
+def as_node(
+    parent: NodeBase, ast: dict, at: str, list_idx: int | None = None
+) -> NodeBase:
 
     new_node = node_class_factory(ast=ast, parent=parent)
     parent._children.add(new_node)
@@ -59,8 +62,10 @@ def as_node(parent: NodeBase, ast: dict, at: str, list_idx: int | None = None):
                 f"Field {at} is a {type(child)}, replace it with a new node breaks the AST!"
             )
 
+    return new_node
 
-def replace_node(node: NodeBase, ast: dict):
+
+def replace_node(node: NodeBase, ast: dict) -> NodeBase:
     parent: NodeBase = node._parent
     if parent is None:
         raise ValueError(f"{node} has no parent, maybe the AST is broken?")
@@ -93,6 +98,8 @@ def replace_node(node: NodeBase, ast: dict):
         logger.error(
             f"{parent} is bound with a non-attribute child, maybe the AST is broken?"
         )
+
+    return new_node
 
 
 def drop_node(node: NodeBase):
@@ -165,18 +172,22 @@ ast_mul = partial(ast_bop, "*")
 ast_and = partial(ast_bop, "&")
 ast_or = partial(ast_bop, "|")
 ast_xor = partial(ast_bop, "^")
-ast_not = partial(ast_uop, "~")
-ast_neg = partial(ast_uop, "-")
+ast_mod = partial(ast_bop, "%")
 ast_lsh = partial(ast_bop, "<<")
 ast_rsl = partial(ast_bop, ">>")
 ast_rsa = partial(ast_bop, ">>>")
-ast_cmp = partial(ast_bop, "==")
+ast_eq = partial(ast_bop, "==")
+ast_ne = partial(ast_bop, "!=")
 ast_le = partial(ast_bop, "<=")
 ast_ge = partial(ast_bop, ">=")
 ast_lt = partial(ast_bop, "<")
 ast_gt = partial(ast_bop, ">")
 ast_land = partial(ast_bop, "&&")
 ast_lor = partial(ast_bop, "||")
+
+ast_not = partial(ast_uop, "~")
+ast_neg = partial(ast_uop, "-")
+ast_lnot = partial(ast_uop, "!")
 
 
 def ast_elem(name: str) -> dict:
@@ -198,17 +209,32 @@ def ast_elem_conv(type_name: str, expr: dict) -> dict:
     )
 
 
-# TODO other types
+def ast_var_dec(name: str, value: int | None, const=False) -> dict:
+    # TODO other types
+    if value is not None:
+        return fake_ast(
+            nodeType="VariableDeclaration",
+            typeName=ast_elem("int"),
+            constant=const,
+            storageLocation="default",
+            name=name,
+            value=ast_num(value),
+        )
+    else:
+        return fake_ast(
+            nodeType="VariableDeclaration",
+            typeName=ast_elem("int"),
+            constant=const,
+            storageLocation="default",
+            name=name,
+        )
 
 
-def ast_var_dec(name: str, value: int, const=False) -> dict:
+def ast_var_dec_stmt(name: str, value: int) -> dict:
     return fake_ast(
-        nodeType="VariableDeclaration",
-        typeName=ast_elem("int"),
-        constant=const,
-        storageLocation="default",
-        name=name,
-        value=ast_num(value),
+        nodeType="VariableDeclarationStatement",
+        declarations=[ast_var_dec(name=name, value=None, const=False)],
+        initialValue=ast_num(value),
     )
 
 

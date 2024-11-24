@@ -1,118 +1,86 @@
-import json
 import logging
-import os
-
-import solcast
-from packaging import version
-import solcx
-
+import random
 from collections import deque
+from solcast.nodes import NodeBase
+from solidity import *
+from opaqueConstants import random_name, random_number
 
 logger = logging.getLogger(__name__)
 
-SOLC_VERSION = "0.8.28"
 
-def obfuscate(node):
-    logger.debug("Inserting opaque predicates obfuscation on {node}")
-
-    # check solc version
-    try:
-        solc_ver = solcx.get_solc_version()
-    except Exception as e:
-        logger.error("solc is not found on your system")
-        return
-
-    expect_ver = version.parse(SOLC_VERSION)
-    if solc_ver < expect_ver:
-        logger.warning(
-            f"Your solc version {str(solc_ver)} is smaller than "
-            f"{str(expect_ver)}, the output could be wrong!"
-        )
-
-    file_name = 'opaque_predicates.sol'
-
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    file_path = os.path.join(current_directory, file_name)
-
-    # generate solc options to compile ast
-    solc_options = {
-        "language": "Solidity",
-        "sources": {
-            file_name: {
-                "urls": [
-                    file_path,
-                ]
-            },
-        },
-        "settings": {
-            # "stopAfter": "parsing",
-            "outputSelection": {
-                "*": {
-                    "": [
-                        "ast",
-                    ]
-                }
-            }
-        },
-    }
-
-    # generate ast some predicates nodes
-    try:
-        output_json = solcx.compile_standard(
-            solc_options
-        )
-    except Exception as e:
-        logger.error(f"Compilation error, check your input file path")
-        return
-
-    nodes = solcast.from_standard_output(output_json)
-    logger.debug(f"Get {nodes} from source")
+OPAQUE_FALSE = (
+    lambda x_name, x, y_name, y: ast_ne(  # (x-y)^2 != x^2 - 2xy + y^2
+        ast_mul(  # (x-y)*(x-y)
+            ast_sub(ast_id(x_name), ast_id(y_name)),  # x-y
+            ast_sub(ast_id(x_name), ast_id(y_name)),  # x-y
+        ),
+        ast_add(  # x*x - 2*x*y + y*y
+            ast_sub(  # x*x - 2*x*y
+                ast_mul(ast_id(x_name), ast_id(x_name)),  # x*x
+                ast_mul(ast_mul(ast_num(2), ast_id(x_name)), ast_id(y_name)),  # 2*x*y
+            ),
+            ast_mul(ast_id(y_name), ast_id(y_name)),  # y*y
+        ),
+    ),
+    lambda x_name, x, y_name, y: ast_land(  # (x % 2 == 0) && (x % 2 == 1)
+        ast_eq(ast_mod(ast_id(x_name), ast_num(2)), ast_num(0)),
+        ast_eq(ast_mod(ast_id(x_name), ast_num(2)), ast_num(1)),
+    ),
+    lambda x_name, x, y_name, y: ast_land(  # (x >= y) && (x < y)
+        ast_ge(ast_id(x_name), ast_id(y_name)),
+        ast_lt(ast_id(x_name), ast_id(y_name)),
+    ),
+    # Feel free to add more!
+)
 
 
-    pNode = nodes[0]
-
-    # create opaque predicates
-    predicate_variable_declaration1 = nodes[0].nodes[1].nodes[0].nodes[0]
-    predicate1 = nodes[0].nodes[1].nodes[0].nodes[1]
-
-    predicate_variable_declaration2 = nodes[0].nodes[1].nodes[0].nodes[2]
-    predicate2 = nodes[0].nodes[1].nodes[0].nodes[3]
-
-    predicate_variable_declaration3 = nodes[0].nodes[1].nodes[0].nodes[4]
-    predicate_variable_declaration4 = nodes[0].nodes[1].nodes[0].nodes[5]
-    predicate3 = nodes[0].nodes[1].nodes[0].nodes[6]
-
+def obfuscate(node: NodeBase) -> NodeBase:
+    logger.debug(f"Inserting opaque predicates on {node}")
 
     # traverse the ast to insert opaque predicates
 
-    queue = deque([(node, 0)])  # BFS deque
+    bfs_queue = deque([node])  # BFS deque
     count = 0
-    max_depth = 2
-    while queue:
-        x, depth = queue.popleft()
-        print(x)
-        if depth > max_depth:
-            break
-        if hasattr(x, 'nodes') and depth <= max_depth:
-            for child in x.nodes:
-                queue.append((child, depth + 1))
-        if x.nodeType == 'FunctionDefinition' and hasattr(x, 'nodes'):
-            original_nodes = x.nodes
-            predicate_reference = None
-            if count % 3 == 0:
-                predicate_reference = predicate1
-                x.nodes = [predicate_variable_declaration1, predicate_reference]
-            elif count % 3 == 1:
-                predicate_reference = predicate2
-                x.nodes = [predicate_variable_declaration2, predicate_reference]
-            elif count % 3 == 2:
-                predicate_reference = predicate3
-                x.nodes = [predicate_variable_declaration3, predicate_variable_declaration4, predicate_reference]
-            count += 1
-            predicate_reference.trueBody = original_nodes
+    while len(bfs_queue) > 0:
 
-    print(node.nodes[2].nodes[13].__dict__)
+        n = bfs_queue.popleft()
+
+        if n.nodeType in ("FunctionDefinition", "ModifierDefinition"):
+            if hasattr(n, "nodes"):
+                original_nodes = n.nodes
+                opaque_false = random.choice(OPAQUE_FALSE)
+
+                x, y = random_number(), random_number()
+                x_name, y_name = (
+                    random_name(),
+                    random_name(),
+                )  # TODO: label name conflict
+                x_dec_stmt, y_dec_stmt = ast_var_dec_stmt(x_name, x), ast_var_dec_stmt(
+                    y_name, y
+                )
+                opaque_ast = ast_if_stmt(
+                    cond=opaque_false(x_name=x_name, x=x, y_name=y_name, y=y),
+                    true_body=[],
+                    false_body=[],
+                )
+
+                n.nodes = []
+
+                opaque = as_node(parent=n, ast=opaque_ast, at="nodes", list_idx=0)
+                as_node(parent=n, ast=y_dec_stmt, at="nodes", list_idx=0)
+                as_node(parent=n, ast=x_dec_stmt, at="nodes", list_idx=0)
+
+                for x in original_nodes:
+                    x._parent = opaque
+                    opaque._children.add(x)
+                opaque.falseBody = original_nodes
+                # TODO add depth of original_nodes recursively
+
+                continue
+
+        if n.nodeType in ("ContractDefinition", "SourceUnit"):
+            for child in n._children:
+                bfs_queue.append(child)
 
     logger.debug("Opaque predicates insertion done")
 
