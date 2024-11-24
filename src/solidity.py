@@ -202,10 +202,24 @@ def ast_elem_conv(type_name: str, expr: dict) -> dict:
     return fake_ast(
         nodeType="FunctionCall",
         expression=ast_elem_expr(type_name),
-        arguments=[
-            expr,
-        ],
+        arguments=[expr],
         names=[],
+    )
+
+
+def ast_func_call(name: str, args: list, names: list = []) -> dict:
+    return fake_ast(
+        nodeType="FunctionCall",
+        expression=ast_id(name),
+        arguments=args,
+        names=names,
+    )
+
+
+def ast_expr_stmt(expr: dict) -> dict:
+    return fake_ast(
+        nodeType="ExpressionStatement",
+        expression=expr,
     )
 
 

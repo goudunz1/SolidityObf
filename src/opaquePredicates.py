@@ -3,7 +3,7 @@ import random
 from collections import deque
 from solcast.nodes import NodeBase
 from solidity import *
-from opaqueConstants import random_name, random_number
+from opaqueConstants import random_name, random_number, opaque_int
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,19 @@ OPAQUE_FALSE = (
 )
 
 
+def garbage_code(length: int = 1) -> list:
+    # For now, just generate
+    # require(random_value == random_value);
+    result = []
+    for _ in range(length):
+        value = random_number()
+        garbage_expr = ast_func_call(
+            "require", [ast_eq(ast_num(value), ast_num(value))]
+        )
+        result.append(ast_expr_stmt(expr=garbage_expr))
+    return result
+
+
 def obfuscate(node: NodeBase) -> NodeBase:
     logger.debug(f"Inserting opaque predicates on {node}")
 
@@ -60,7 +73,7 @@ def obfuscate(node: NodeBase) -> NodeBase:
                 )
                 opaque_ast = ast_if_stmt(
                     cond=opaque_false(x_name=x_name, x=x, y_name=y_name, y=y),
-                    true_body=[],
+                    true_body=garbage_code(length=4),
                     false_body=[],
                 )
 
