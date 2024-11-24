@@ -223,12 +223,14 @@ def ast_expr_stmt(expr: dict) -> dict:
     )
 
 
-def ast_var_dec(name: str, value: int | None, const=False) -> dict:
+def ast_var_dec(
+    name: str, value: int | None, const: bool = False, elem_name: str = "int"
+) -> dict:
     # TODO other types
     if value is not None:
         return fake_ast(
             nodeType="VariableDeclaration",
-            typeName=ast_elem("int"),
+            typeName=ast_elem(elem_name),
             constant=const,
             storageLocation="default",
             name=name,
@@ -237,7 +239,7 @@ def ast_var_dec(name: str, value: int | None, const=False) -> dict:
     else:
         return fake_ast(
             nodeType="VariableDeclaration",
-            typeName=ast_elem("int"),
+            typeName=ast_elem(elem_name),
             constant=const,
             storageLocation="default",
             name=name,
