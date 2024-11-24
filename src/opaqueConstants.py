@@ -5,14 +5,35 @@ from math import gcd
 from gmpy2 import gcdext
 from solcast.nodes import NodeBase
 
-from astUtils import *
+from solidity import *
 
 logger = logging.getLogger(__name__)
 
 mask = lambda x: (1 << x) - 1  # 0x1111_1111_...
 
+OPAQUE0 = (
+    # xor: x^y == x&~y|~x&y
+    lambda x_name, x, y_name, y: ast_sub(
+        ast_xor(ast_id(x_name), ast_id(y_name)),
+        ast_or(
+            ast_and(ast_id(x_name), ast_not(ast_id(y_name))),
+            ast_and(ast_not(ast_id(x_name)), ast_id(y_name)),
+        ),
+    ),
+    # De Morgan's law: ~x|y == ~(x&~y)
+    lambda x_name, x, y_name, y: ast_sub(
+        ast_or(ast_not(ast_id(x_name)), ast_id(y_name)),
+        ast_not(ast_and(ast_id(x_name), ast_not(ast_id(y_name)))),
+    ),
+    # Feel free to add more!
+)
+
 
 def random_number(bits: int = 128) -> int:
+    """
+    Return a random positive number that can be represented by integer of bit
+    *bits*
+    """
     return random.randint(1 << (bits - 2), (1 << (bits - 1)) - 1)
 
 
@@ -21,30 +42,12 @@ def random_name(length: int = 16) -> str:
     return start + "".join(random.sample(AZaz09dollar_, length - 1))
 
 
-OPAQUE0 = (
-    # xor: x^y == x&~y|~x&y
-    lambda x_name, x, y_name, y: SOL_SUB(
-        SOL_XOR(ident(x_name), ident(y_name)),
-        SOL_OR(
-            SOL_AND(ident(x_name), SOL_NOT(ident(y_name))),
-            SOL_AND(SOL_NOT(ident(x_name)), ident(y_name)),
-        ),
-    ),
-    # De Morgan's law: ~x|y == ~(x&~y)
-    lambda x_name, x, y_name, y: SOL_SUB(
-        SOL_OR(SOL_NOT(ident(x_name)), ident(y_name)),
-        SOL_NOT(SOL_AND(ident(x_name), SOL_NOT(ident(y_name)))),
-    ),
-    # Feel free to add more!
-)
-
-
 def opaque_int(
     m: int, x_name: str, x: int, y_name: str, y: int, bits: int = 128
-) -> NodeBase:
+) -> dict:
     """
-    Generate a opaque integer of value m with linear combination of x and y
-    based on Bezout's theorem
+    Generate an AST representation of opaque integer of value m with linear
+    combination of x and y based on Bezout's theorem
 
     We assume that x and y are positive coprime integers with 127 bits
     """
@@ -54,7 +57,7 @@ def opaque_int(
             f"opaque const generation: bad x, y value {hex(x)} and {hex(y)}"
         )
 
-    # When m is zero, generate opaque 0 based on identity equations
+    # When m is zero, generate opaque 0 based on ast_id equations
     if m == 0:
         # template of opaque0
         opaque0: callable = random.choice(OPAQUE0)
@@ -84,21 +87,21 @@ def opaque_int(
 
     # sign is inverted twice or not inverted, We have aa*xx - bb*yy = m
     if sign is True:
-        expr = SOL_SUB(
-            SOL_MUL(number(aa), ident(x_name)),
-            SOL_MUL(number(bb), ident(y_name)),
+        expr = ast_sub(
+            ast_mul(ast_num(aa), ast_id(x_name)),
+            ast_mul(ast_num(bb), ast_id(y_name)),
         )
     # sign is inverted once, We have aa*xx - bb*yy = -m
     else:
-        expr = SOL_SUB(
-            SOL_MUL(number(bb), ident(y_name)),
-            SOL_MUL(number(aa), ident(x_name)),
+        expr = ast_sub(
+            ast_mul(ast_num(bb), ast_id(y_name)),
+            ast_mul(ast_num(aa), ast_id(x_name)),
         )
 
     return expr
 
 
-def opaque_fixed() -> NodeBase:
+def opaque_fixed() -> dict:
     # TODO opaque fixed
     pass
 
@@ -123,16 +126,17 @@ def obfuscate(node: NodeBase) -> NodeBase:
     while gcd(x, y) != 1:
         y = random_number()
     x_name, y_name = random_name(), random_name()  # TODO: label name conflict
-    x_dec, y_dec = var_dec(x_name, x, const=True), var_dec(y_name, y, const=True)
+    x_dec, y_dec = ast_var_dec(x_name, x, const=True), ast_var_dec(
+        y_name, y, const=True
+    )
     idx = 0
     for n in node.nodes:
         if n.nodeType in ("PragmaDirective", "UsingDirective", "ImportDirective"):
             idx += 1
         else:
             break
-    node.nodes[idx:idx] = x_dec, y_dec
-    bind(node, x_dec)
-    bind(node, y_dec)
+    as_node(parent=node, ast=y_dec, at="nodes", list_idx=idx)
+    as_node(parent=node, ast=x_dec, at="nodes", list_idx=idx)
     # TODO how to defend against compiler optimization of "constant variables"
 
     bfs_queue = deque([node])
@@ -148,7 +152,7 @@ def obfuscate(node: NodeBase) -> NodeBase:
                 hasattr(n, "typeDescriptions")
                 and "typeIdentifier" in n.typeDescriptions
             ):
-                type_id = n.typeDescriptions["typeIdentifier"]
+                type_id: str = n.typeDescriptions["typeIdentifier"]
                 if type_id.startswith("t_rational"):
                     # Normally, solc pre-compute values that can be determined
                     # during compilation time, i.e. the expression (1+1)*(2-3)
@@ -165,37 +169,36 @@ def obfuscate(node: NodeBase) -> NodeBase:
                             expr = opaque_int(value, x_name, x, y_name, y)
                             # Note that there'll be junk values in the high
                             # 128 bits of the result
-                            expr = SOL_AND(expr, number(mask(128)))
+                            expr = ast_and(expr, ast_num(mask(128)))
                         # 128 bits, but negative
                         elif (value >> 128) == -1:
                             expr = opaque_int(value, x_name, x, y_name, y)
                             # Because mask(128) << 128 can not be represented by
                             # int256, we generate the expression (-1) << 128
                             # instead
-                            expr = SOL_OR(
-                                expr, SOL_LSH(SOL_NEG(number(1)), number(128))
+                            expr = ast_or(
+                                expr, ast_lsh(ast_neg(ast_num(1)), ast_num(128))
                             )
                         # We cannot represent *value* using 128 bits
                         else:
                             value_low = value & mask(128)
                             value_high = value >> 128
                             expr_low = opaque_int(value_low, x_name, x, y_name, y)
-                            expr_low = SOL_AND(expr_low, number(mask(128)))
+                            expr_low = ast_and(expr_low, ast_num(mask(128)))
                             expr_high = opaque_int(value_high, x_name, x, y_name, y)
-                            expr = SOL_OR(expr_low, SOL_LSH(expr_high, number(128)))
+                            expr = ast_or(expr_low, ast_lsh(expr_high, ast_num(128)))
 
                         # Now expr holds a int that has the same bit
                         # representation as *value*
 
-                        # TODO type conversion
-                        expr = type_conv("uint", expr)
-                        # TODO special: sub-denomination? function call?
+                        # TODO type conversion??
+                        # TODO sub-denomination
+                        expr = ast_elem_conv("uint", expr)
 
-                        infect(n, expr)
+                        replace_node(node=n, ast=expr)
 
-                    # fixed
+                    # TODO fixed
                     else:
-                        # TODO
                         pass
 
                     continue

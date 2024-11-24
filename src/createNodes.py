@@ -1,4 +1,4 @@
-from solcast.nodes import NodeBase
+from solcast.nodes import NodeBase, node_class_factory
 
 def createVariable(variable_dict, parent=None):
     ast = {

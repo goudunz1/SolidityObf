@@ -6,9 +6,9 @@ from packaging import version
 import logging
 import time
 from solcx import set_solc_version
-from astUtils import node2src
+from solidity import gen_src
 
-set_solc_version('0.8.28')
+#set_solc_version('0.8.28')
 SOLC_VERSION = "0.8.28"
 
 #LOG_LEVEL = logging.INFO
@@ -22,7 +22,7 @@ MODULES = [
     # example of adding and enabling controlFlowFlatten.py
     # {"name": "controlFlowFlatten", "enabled": True},
     {"name": "controlFlowFlatten", "enabled": False},
-    {"name": "opaqueConstants", "enabled": False},
+    {"name": "opaqueConstants", "enabled": True},
     {"name": "opaquePredicates", "enabled": False}
 ]
 
@@ -137,9 +137,9 @@ def main():
             node_obf = module.obfuscate(node_obf)
     # convert and compress to source code
     if LOG_LEVEL == logging.DEBUG:
-        source_obf = node2src(node_obf, indent=2)
+        source_obf = gen_src(node_obf, indent=2)
     else:
-        source_obf = node2src(node_obf)
+        source_obf = gen_src(node_obf)
 
     with open(output_path, "w") as fp:
         fp.write(source_obf)

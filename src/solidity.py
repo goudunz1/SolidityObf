@@ -1,5 +1,6 @@
 import logging
 import string
+from bisect import insort_left
 from copy import deepcopy
 from functools import partial
 from solcast.nodes import NodeBase, node_class_factory
@@ -9,205 +10,234 @@ logger = logging.getLogger(__name__)
 AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
 AZazdollar_ = string.ascii_letters + "$_"
 
+fake_id = -1
 
-fake_node = node_class_factory(
-    ast={"nodeType": "FakeNode", "src": "0:0:0", "fake": True}, parent=None
-)
+def fake_ast(**kwargs) -> dict:
+    global fake_id
 
+    ast = kwargs
+    if "nodeType" not in ast:
+        ast["nodeType"] = "FakeNode"
+    ast["src"] = "0:0:0"
+    ast["id"] = fake_id
+    fake_id -= 1
 
-def bind(parent: NodeBase, child: NodeBase):
-    # TODO depth? baseNodeType? ...
-    parent._children.add(child)
-    child._parent = parent
-
-
-def unbind(parent: NodeBase, child: NodeBase):
-    # TODO position
-    parent._children.remove(child)
-    child._parent = None
+    return ast
 
 
-def ident(name: str) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "Identifier"
-    x.name = name
-    return x
+def as_node(parent: NodeBase, ast: dict, at: str, list_idx: int | None = None):
 
+    new_node = node_class_factory(ast=ast, parent=parent)
+    parent._children.add(new_node)
 
-# TODO fixed number
-def number(value: int) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "Literal"
-    x.kind = "number"
-    x.value = hex(value) if value > 255 else str(value)
-    return x
+    if at not in parent.fields:
+        insort_left(parent.fields, at)
+        setattr(parent, at, new_node)
 
+        logger.debug(f"Added {parent}.{at} to {new_node}")
 
-def paren(sub_expr: NodeBase) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "TupleExpression"
-    x.components = [sub_expr]
-    bind(x, sub_expr)
-    return x
-
-
-def binary_op(operator: str, left: NodeBase, right: NodeBase) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "BinaryOperation"
-    x.operator = operator
-
-    # Add parentheses to left expression and right expression
-    # TODO: priorities
-    if left.nodeType not in ("Literal", "Identifier"):
-        left = paren(left)
-
-    if right.nodeType not in ("Literal", "Identifier"):
-        right = paren(right)
-
-    x.leftExpression = left
-    x.rightExpression = right
-
-    bind(x, left)
-    bind(x, right)
-
-    return x
-
-
-def unary_op(operator: str, sub_expr: NodeBase) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "UnaryOperation"
-    x.operator = operator
-
-    # Add parentheses to left expression and right expression
-    # TODO: priorities
-    if sub_expr.nodeType not in ("Literal", "Identifier"):
-        sub_expr = paren(sub_expr)
-
-    x.subExpression = sub_expr
-    bind(x, sub_expr)
-
-    return x
-
-
-SOL_ADD = partial(binary_op, "+")
-SOL_SUB = partial(binary_op, "-")
-SOL_MUL = partial(binary_op, "*")
-SOL_AND = partial(binary_op, "&")
-SOL_OR = partial(binary_op, "|")
-SOL_XOR = partial(binary_op, "^")
-SOL_NOT = partial(unary_op, "~")
-SOL_NEG = partial(unary_op, "-")
-SOL_LSH = partial(binary_op, "<<")
-SOL_RSL = partial(binary_op, ">>")
-SOL_RSA = partial(binary_op, ">>>")
-# TODO: more operators
-
-
-def elementary(name: str) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "ElementaryTypeName"
-    x.name = name
-    return x
-
-
-def elementary_expr(name: str) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "ElementaryTypeNameExpression"
-    x.typeName = elementary(name)
-    bind(x, x.typeName)
-    return x
-
-
-def type_conv(type_name: str, expr: NodeBase) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "FunctionCall"
-    x.expression = elementary_expr(type_name)
-    bind(x, x.expression)
-    x.arguments = [expr]
-    x.names = []
-    bind(x, expr)
-    return x
-
-
-def var_dec(name: str, value: int, const=False) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "VariableDeclaration"
-
-    x.typeName = elementary("int")
-    bind(x, x.typeName)
-
-    if const is True:
-        x.constant = True
     else:
-        x.storageLocation = "default"
-    # TODO more fields
+        child = getattr(parent, at)
+        if isinstance(child, NodeBase):
+            setattr(parent, at, new_node)
+            child._parent = None
+            parent._children.remove(child)
 
-    x.name = name
+            logger.debug(f"Replaced {parent}.{at} with {new_node}")
 
-    x.value = number(value)
-    bind(x, x.value)
+        elif isinstance(child, list):
+            if list_idx is None:
+                raise ValueError(
+                    f"Field {at} is a list, you should specify list index to insert at"
+                )
+            child.insert(list_idx, new_node)
 
-    return x
+            logger.debug(f"Inserted {new_node} to {parent}.{at}[{list_idx}]")
 
-
-def for_stmt(init_expr: NodeBase, cond: NodeBase, loop_expr: NodeBase) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "ForStatement"
-    # TODO
-    return x
-
-
-def if_stmt(
-    cond: NodeBase, true_body: NodeBase, false_body: NodeBase = None
-) -> NodeBase:
-    x = deepcopy(fake_node)
-    x.nodeType = "IfStatement"
-    # TODO
-    return x
+        else:
+            raise ValueError(
+                f"Field {at} is a {type(child)}, replace it with a new node breaks the AST!"
+            )
 
 
-def while_stmt(cond: NodeBase, body: NodeBase, do=False):
-    x = deepcopy(fake_node)
-    if do is True:
-        x.nodeType = "DoWhileStatement"
-    else:
-        x.nodeType = "WhileStatement"
-    # TODO
-    return x
-
-
-def infect(node: NodeBase, new_node: NodeBase):
-    parent = node._parent
+def replace_node(node: NodeBase, ast: dict):
+    parent: NodeBase = node._parent
     if parent is None:
-        return
+        raise ValueError(f"{node} has no parent, maybe the AST is broken?")
+
+    new_node = node_class_factory(ast=ast, parent=parent)
+    parent._children.add(new_node)
+
+    node._parent = None
+    parent._children.remove(node)
 
     found = False
     # Locate node in its parent and set new_node to the exactly same position
-    for attr in dir(parent):
-        if attr.startswith("_"):
-            continue
+    for at in parent.fields:
 
-        obj = getattr(parent, attr)
-        if isinstance(obj, list):
+        child = getattr(parent, at)
+        if isinstance(child, list):
             try:
-                idx = obj.index(node)
-                obj[idx] = new_node
-                break
+                idx = child.index(node)
             except:
                 continue
-        elif obj == node:
-            setattr(parent, attr, new_node)
+            child[idx] = new_node
+            logger.debug(f"Replaced {parent}.{at}[{idx}] with {new_node}")
+            break
+        elif child == node:
+            setattr(parent, at, new_node)
+            logger.debug(f"Replaced {parent}.{at} with {new_node}")
             break
     else:
         # Cannot locate node in parent???
-        logger.error(f"Bad node {parent} that binds a non-attribute child!")
-
-    # We should also update parental relationship for new node
-    unbind(parent, node)
-    bind(parent, new_node)
+        logger.error(
+            f"{parent} is bound with a non-attribute child, maybe the AST is broken?"
+        )
 
 
-def node2src(root: NodeBase, indent: int = 0) -> str:
+def drop_node(node: NodeBase):
+    # TODO
+    pass
+
+
+def ast_id(name: str) -> dict:
+    return fake_ast(nodeType="Identifier", name=name)
+
+
+def ast_num(value: int) -> dict:
+    # Note that in lexical level number is always positive
+    return fake_ast(
+        nodeType="Literal",
+        kind="number",
+        hexValue=hex(value),
+        value=hex(value) if value > 255 else str(value),
+    )
+
+
+# TODO ast_str
+
+# TODO ast_fixed
+
+
+def ast_par(sub_expr: dict) -> dict:
+    return fake_ast(
+        nodeType="TupleExpression",
+        components=[
+            sub_expr,
+        ],
+    )
+
+
+def ast_bop(operator: str, left: dict, right: dict) -> dict:
+
+    # Add parentheses to left expression and right expression
+    # TODO: priorities
+    if left["nodeType"] not in ("Literal", "Identifier"):
+        left = ast_par(left)
+
+    if right["nodeType"] not in ("Literal", "Identifier"):
+        right = ast_par(right)
+
+    return fake_ast(
+        nodeType="BinaryOperation",
+        operator=operator,
+        leftExpression=left,
+        rightExpression=right,
+    )
+
+
+def ast_uop(operator: str, sub_expr: dict) -> dict:
+
+    # Add parentheses to sub-expression
+    # TODO: priorities
+    if sub_expr["nodeType"] not in ("Literal", "Identifier"):
+        sub_expr = ast_par(sub_expr)
+
+    return fake_ast(
+        nodeType="UnaryOperation", operator=operator, subExpression=sub_expr
+    )
+
+
+# TODO more operators
+ast_add = partial(ast_bop, "+")
+ast_sub = partial(ast_bop, "-")
+ast_mul = partial(ast_bop, "*")
+ast_and = partial(ast_bop, "&")
+ast_or = partial(ast_bop, "|")
+ast_xor = partial(ast_bop, "^")
+ast_not = partial(ast_uop, "~")
+ast_neg = partial(ast_uop, "-")
+ast_lsh = partial(ast_bop, "<<")
+ast_rsl = partial(ast_bop, ">>")
+ast_rsa = partial(ast_bop, ">>>")
+ast_cmp = partial(ast_bop, "==")
+ast_le = partial(ast_bop, "<=")
+ast_ge = partial(ast_bop, ">=")
+ast_lt = partial(ast_bop, "<")
+ast_gt = partial(ast_bop, ">")
+ast_land = partial(ast_bop, "&&")
+ast_lor = partial(ast_bop, "||")
+
+
+def ast_elem(name: str) -> dict:
+    return fake_ast(nodeType="ElementaryTypeName", name=name)
+
+
+def ast_elem_expr(name: str) -> dict:
+    return fake_ast(nodeType="ElementaryTypeNameExpression", typeName=ast_elem(name))
+
+
+def ast_elem_conv(type_name: str, expr: dict) -> dict:
+    return fake_ast(
+        nodeType="FunctionCall",
+        expression=ast_elem_expr(type_name),
+        arguments=[
+            expr,
+        ],
+        names=[],
+    )
+
+
+# TODO other types
+
+
+def ast_var_dec(name: str, value: int, const=False) -> dict:
+    return fake_ast(
+        nodeType="VariableDeclaration",
+        typeName=ast_elem("int"),
+        constant=const,
+        storageLocation="default",
+        name=name,
+        value=ast_num(value),
+    )
+
+
+def ast_for_stmt(init_expr: dict, cond: dict, loop_expr: dict) -> dict:
+    # TODO
+    return fake_ast(nodeType="ForStatement")
+
+
+def ast_if_stmt(cond: dict, true_body: list, false_body: list | None = None) -> dict:
+    if false_body is not None:
+        return fake_ast(
+            nodeType="IfStatement",
+            condition=cond,
+            trueBody=true_body,
+            falseBody=false_body,
+        )
+    else:
+        return fake_ast(nodeType="IfStatement", condition=cond, trueBody=true_body)
+
+
+def ast_while_stmt(cond: dict, body: dict, do=False):
+    # TODO
+    if do is True:
+        return fake_ast(nodeType="DoWhileStatement")
+    else:
+        return fake_ast(nodeType="WhileStatement")
+
+
+def gen_src(root: NodeBase, indent: int = 0) -> str:
     """
     Convert a *SourceUnit* AST node to solidity source code
     Parameters:
@@ -248,7 +278,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
 
         nonlocal aux_stack
 
-        if isinstance(obj, (list, tuple)):
+        if isinstance(obj, list):
             aux_stack.extend(obj)
         else:
             aux_stack.append(obj)
@@ -263,9 +293,6 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         end_stmt = lambda: aux_stack.append(";\n")
     else:
         end_stmt = lambda: aux_stack.append(";")
-
-    shift = 0  # indent level iff. indent is on
-    new_line = False  # new line flag, iff. indent is on
 
     def emit_block(obj: list, continuous: bool = False):
         """
@@ -293,18 +320,18 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         else:
             aux_stack.append("}")
 
-    def emit_tuple(obj: list, paren: bool = True):
+    def emit_tuple(obj: list, par: bool = True):
         """
         Push a list of components in tuple format
         Parameters:
             obj (list): the tuple body
-            paren (bool): whether to show the parentheses, i.e.
+            par (bool): whether to show the parentheses, i.e.
                 inheritance-specifier
         """
 
         nonlocal aux_stack
 
-        if paren is True:
+        if par is True:
             aux_stack.append("(")
 
         if len(obj) > 0:
@@ -313,7 +340,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
                 aux_stack.append(",")
             aux_stack.append(obj[-1])
 
-        if paren is True:
+        if par is True:
             aux_stack.append(")")
 
     def emit_dict(values: list, keys: list | None = None, line_break: bool = False):
@@ -439,7 +466,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         # inheritance
         if len(node.baseContracts) > 0:
             emit("is")
-            emit_tuple(node.baseContracts, paren=False)
+            emit_tuple(node.baseContracts, par=False)
         # contract body
         emit_block(node.nodes)
 
@@ -720,7 +747,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         # Check if else branch present
         has_else = hasattr(node, "falseBody")
         # trueBody can be a list of nodes or a normal node
-        if isinstance(node.trueBody, (list, tuple)):
+        if isinstance(node.trueBody, list):
             # Do not insert line break if there's an else branch
             emit_block(node.trueBody, continuous=has_else)
         else:
@@ -729,7 +756,7 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
         if has_else:
             emit("else")
             # falseBody can be a list of nodes or a normal node
-            if isinstance(node.falseBody, (list, tuple)):
+            if isinstance(node.falseBody, list):
                 emit_block(node.falseBody)
             else:
                 emit(node.falseBody)
@@ -859,6 +886,9 @@ def node2src(root: NodeBase, indent: int = 0) -> str:
     # To speed up pre-order visiting, we use stack-based iteration instead of
     # recursion.
     pre_ord_stack.append(root)
+
+    shift = 0  # indent level iff. indent is on
+    new_line = False  # new line flag, iff. indent is on
 
     while len(pre_ord_stack) > 0:
         x = pre_ord_stack.pop()
