@@ -79,6 +79,22 @@ def createIfStatement(parent=None):
     }
     return NodeBase(ast, parent)
 
+def createIfStatement_woF(parent=None):
+    ast = {
+            "condition": {
+            # 其中是binaryOperation
+            },
+            "trueBody": {   "id": 47,
+                            "nodeType": "Block",
+                            "src": "317:169:0",
+                            "statements":[]
+                            },
+            "id": 48,
+            "nodeType": "IfStatement",
+            "src": "0:0:0"                 
+    }
+    return NodeBase(ast, parent)
+
 
 def createBinaryOperation(binaryStatement_dict, parent=None):
     if isinstance(binaryStatement_dict["left"], str):

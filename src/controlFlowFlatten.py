@@ -151,11 +151,11 @@ def obfuscate(node):
         # 根据基本块及控制流图进行ControlFlow_Flatten
         node_list = []
         for child in block_list:
-            if1 = createIfStatement()
+            if1 = createIfStatement_woF()
             binary_condition = {"left":f"state{statenumber}", "operator":"==", "right": child.index}
             condition = createBinaryOperation(binary_condition)
             if1.condition = condition
-            if1.fields.remove("falseBody")
+            #if1.fields.remove("falseBody")
 
             if child.nodeType == "IF":
                 trueBody = createIfStatement(if1)
@@ -168,13 +168,14 @@ def obfuscate(node):
                         jump_index2 = i.index
                 inner_trueBody = createEpression({"name":f"state{statenumber}", "value":str(jump_index1)}, trueBody)
                 if jump_index2 < 0:
-                    trueBody.fields.remove("falseBody")
+                    #trueBody.fields.remove("falseBody")
+                    trueBody = createIfStatement_woF(if1)
                 else:
                     inner_falseBody = createEpression({"name":f"state{statenumber}", "value":str(jump_index2)}, trueBody)
                     trueBody.falseBody.append(inner_falseBody)
                 trueBody.condition = inner_condition
                 trueBody.trueBody.append(inner_trueBody)
-                if1.trueBody = trueBody
+                if1.trueBody = [trueBody]
 
             elif child.nodeType in ("tbody", "fbody"):
                 flag = False
@@ -195,13 +196,14 @@ def obfuscate(node):
                                     jump_index2 = i.index
                             inner_trueBody = createEpression({"name":f"state{statenumber}", "value":str(jump_index1)}, trueBody)
                             if jump_index2 < 0:
-                                trueBody.fields.remove("falseBody")
+                                #trueBody.fields.remove("falseBody")
+                                trueBody = createIfStatement_woF(if1)
                             else:
                                 inner_falseBody = createEpression({"name":f"state{statenumber}", "value":str(jump_index2)}, trueBody)
                                 trueBody.falseBody.append(inner_falseBody)
                             trueBody.condition = inner_condition
                             trueBody.trueBody.append(inner_trueBody)
-                            if1.trueBody = trueBody
+                            if1.trueBody = [trueBody]
                             break
                 else:
                     inner_ExpressionList = []
@@ -235,6 +237,7 @@ def obfuscate(node):
             while_Node.nodes = node_list
         else:
             index = parent.nodes.index(while_Node)
+            parent.nodes.pop(index)
             parent.nodes[index:index] = node_list
 
         # 重置stateNumber
