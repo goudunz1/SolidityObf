@@ -1,26 +1,293 @@
 import logging
 import string
+from bisect import insort_left
+from copy import deepcopy
+from functools import partial
+from solcast.nodes import NodeBase, node_class_factory
 
 logger = logging.getLogger(__name__)
 
-GOOD_CHARS = string.ascii_letters + string.digits + "$_"
+AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
+AZazdollar_ = string.ascii_letters + "$_"
+
+fake_id = -1
 
 
-def gen_for_stmt(init_expr, cond, loop_expr):
-    # TODO: reuseable for statement for obfuscate modules
+def fake_ast(**kwargs) -> dict:
+    global fake_id
+
+    ast = kwargs
+    if "nodeType" not in ast:
+        ast["nodeType"] = "FakeNode"
+    ast["src"] = "0:0:0"
+    ast["id"] = fake_id
+    fake_id -= 1
+
+    return ast
+
+
+def as_node(
+    parent: NodeBase, ast: dict, at: str, list_idx: int | None = None
+) -> NodeBase:
+
+    new_node = node_class_factory(ast=ast, parent=parent)
+    parent._children.add(new_node)
+
+    if at not in parent.fields:
+        insort_left(parent.fields, at)
+        setattr(parent, at, new_node)
+
+        logger.debug(f"Added {parent}.{at} to {new_node}")
+
+    else:
+        child = getattr(parent, at)
+        if isinstance(child, NodeBase):
+            setattr(parent, at, new_node)
+            child._parent = None
+            parent._children.remove(child)
+
+            logger.debug(f"Replaced {parent}.{at} with {new_node}")
+
+        elif isinstance(child, list):
+            if list_idx is None:
+                raise ValueError(
+                    f"Field {at} is a list, you should specify list index to insert at"
+                )
+            child.insert(list_idx, new_node)
+
+            logger.debug(f"Inserted {new_node} to {parent}.{at}[{list_idx}]")
+
+        else:
+            raise ValueError(
+                f"Field {at} is a {type(child)}, replace it with a new node breaks the AST!"
+            )
+
+    return new_node
+
+
+def replace_node(node: NodeBase, ast: dict) -> NodeBase:
+    parent: NodeBase = node._parent
+    if parent is None:
+        raise ValueError(f"{node} has no parent, maybe the AST is broken?")
+
+    new_node = node_class_factory(ast=ast, parent=parent)
+    parent._children.add(new_node)
+
+    node._parent = None
+    parent._children.remove(node)
+
+    found = False
+    # Locate node in its parent and set new_node to the exactly same position
+    for at in parent.fields:
+
+        child = getattr(parent, at)
+        if isinstance(child, list):
+            try:
+                idx = child.index(node)
+            except:
+                continue
+            child[idx] = new_node
+            logger.debug(f"Replaced {parent}.{at}[{idx}] with {new_node}")
+            break
+        elif child == node:
+            setattr(parent, at, new_node)
+            logger.debug(f"Replaced {parent}.{at} with {new_node}")
+            break
+    else:
+        # Cannot locate node in parent???
+        logger.error(
+            f"{parent} is bound with a non-attribute child, maybe the AST is broken?"
+        )
+
+    return new_node
+
+
+def drop_node(node: NodeBase):
+    # TODO
     pass
 
 
-def gen_if_stmt(cond, true_body, false_body):
-    # TODO: reuseable if statement for obfuscate modules
-    pass
+def ast_id(name: str) -> dict:
+    return fake_ast(nodeType="Identifier", name=name)
 
 
-def node2src(root: object, indent: int = 0) -> str:
+def ast_num(value: int) -> dict:
+    # Note that in lexical level number is always positive
+    return fake_ast(
+        nodeType="Literal",
+        kind="number",
+        hexValue=hex(value),
+        value=hex(value) if value > 255 else str(value),
+    )
+
+
+# TODO ast_str
+
+# TODO ast_fixed
+
+
+def ast_par(sub_expr: dict) -> dict:
+    return fake_ast(
+        nodeType="TupleExpression",
+        components=[
+            sub_expr,
+        ],
+    )
+
+
+def ast_bop(operator: str, left: dict, right: dict) -> dict:
+
+    # Add parentheses to left expression and right expression
+    # TODO: priorities
+    if left["nodeType"] not in ("Literal", "Identifier"):
+        left = ast_par(left)
+
+    if right["nodeType"] not in ("Literal", "Identifier"):
+        right = ast_par(right)
+
+    return fake_ast(
+        nodeType="BinaryOperation",
+        operator=operator,
+        leftExpression=left,
+        rightExpression=right,
+    )
+
+
+def ast_uop(operator: str, sub_expr: dict) -> dict:
+
+    # Add parentheses to sub-expression
+    # TODO: priorities
+    if sub_expr["nodeType"] not in ("Literal", "Identifier"):
+        sub_expr = ast_par(sub_expr)
+
+    return fake_ast(
+        nodeType="UnaryOperation", operator=operator, subExpression=sub_expr
+    )
+
+
+# TODO more operators
+ast_add = partial(ast_bop, "+")
+ast_sub = partial(ast_bop, "-")
+ast_mul = partial(ast_bop, "*")
+ast_and = partial(ast_bop, "&")
+ast_or = partial(ast_bop, "|")
+ast_xor = partial(ast_bop, "^")
+ast_mod = partial(ast_bop, "%")
+ast_lsh = partial(ast_bop, "<<")
+ast_rsl = partial(ast_bop, ">>")
+ast_rsa = partial(ast_bop, ">>>")
+ast_eq = partial(ast_bop, "==")
+ast_ne = partial(ast_bop, "!=")
+ast_le = partial(ast_bop, "<=")
+ast_ge = partial(ast_bop, ">=")
+ast_lt = partial(ast_bop, "<")
+ast_gt = partial(ast_bop, ">")
+ast_land = partial(ast_bop, "&&")
+ast_lor = partial(ast_bop, "||")
+
+ast_not = partial(ast_uop, "~")
+ast_neg = partial(ast_uop, "-")
+ast_lnot = partial(ast_uop, "!")
+
+
+def ast_elem(name: str) -> dict:
+    return fake_ast(nodeType="ElementaryTypeName", name=name)
+
+
+def ast_elem_expr(name: str) -> dict:
+    return fake_ast(nodeType="ElementaryTypeNameExpression", typeName=ast_elem(name))
+
+
+def ast_elem_conv(type_name: str, expr: dict) -> dict:
+    return fake_ast(
+        nodeType="FunctionCall",
+        expression=ast_elem_expr(type_name),
+        arguments=[expr],
+        names=[],
+    )
+
+
+def ast_func_call(name: str, args: list, names: list = []) -> dict:
+    return fake_ast(
+        nodeType="FunctionCall",
+        expression=ast_id(name),
+        arguments=args,
+        names=names,
+    )
+
+
+def ast_expr_stmt(expr: dict) -> dict:
+    return fake_ast(
+        nodeType="ExpressionStatement",
+        expression=expr,
+    )
+
+
+def ast_var_dec(
+    name: str, value: int | None, const: bool = False, elem_name: str = "int"
+) -> dict:
+    # TODO other types
+    if value is not None:
+        return fake_ast(
+            nodeType="VariableDeclaration",
+            typeName=ast_elem(elem_name),
+            constant=const,
+            storageLocation="default",
+            name=name,
+            value=ast_num(value),
+        )
+    else:
+        return fake_ast(
+            nodeType="VariableDeclaration",
+            typeName=ast_elem(elem_name),
+            constant=const,
+            storageLocation="default",
+            name=name,
+        )
+
+
+def ast_var_dec_stmt(name: str, value: int) -> dict:
+    return fake_ast(
+        nodeType="VariableDeclarationStatement",
+        declarations=[ast_var_dec(name=name, value=None, const=False)],
+        initialValue=ast_num(value),
+    )
+
+
+def ast_for_stmt(init_expr: dict, cond: dict, loop_expr: dict, body: list) -> dict:
+    return fake_ast(
+        nodeType="ForStatement",
+        initializationExpression=init_expr,
+        condition=cond,
+        loopExpression=loop_expr,
+        nodes=body,
+    )
+
+
+def ast_if_stmt(cond: dict, true_body: list, false_body: list | None = None) -> dict:
+    if false_body is not None:
+        return fake_ast(
+            nodeType="IfStatement",
+            condition=cond,
+            trueBody=true_body,
+            falseBody=false_body,
+        )
+    else:
+        return fake_ast(nodeType="IfStatement", condition=cond, trueBody=true_body)
+
+
+def ast_while_stmt(cond: dict, body: dict, do=False):
+    if do is True:
+        return fake_ast(nodeType="DoWhileStatement", condition=cond, nodes=body)
+    else:
+        return fake_ast(nodeType="WhileStatement", condition=cond, nodes=body)
+
+
+def gen_src(root: NodeBase, indent: int = 0) -> str:
     """
-    Convert a *SourceUnit* AST node to solidity source
+    Convert a *SourceUnit* AST node to solidity source code
     Parameters:
-        root (object): a *SourceUnit* AST node AKA. the root
+        root (NodeBase): a *SourceUnit* AST node A.K.A. the root
         indent (int): If this field is set to a positive value, indent will be
             turned on, otherwise we generate compact source code
     Returns:
@@ -41,10 +308,10 @@ def node2src(root: object, indent: int = 0) -> str:
 
         nonlocal tokens
 
-        if len(tokens) > 1:
+        if len(tokens) >= 1:
             last = tokens[-1]
             # Insert separator (space) only when necessary
-            if x[0] in GOOD_CHARS and last[-1] in GOOD_CHARS:
+            if x[0] in AZaz09dollar_ and last[-1] in AZaz09dollar_:
                 tokens.append(" ")
         tokens.append(token)
 
@@ -57,7 +324,7 @@ def node2src(root: object, indent: int = 0) -> str:
 
         nonlocal aux_stack
 
-        if isinstance(obj, (list, tuple)):
+        if isinstance(obj, list):
             aux_stack.extend(obj)
         else:
             aux_stack.append(obj)
@@ -72,9 +339,6 @@ def node2src(root: object, indent: int = 0) -> str:
         end_stmt = lambda: aux_stack.append(";\n")
     else:
         end_stmt = lambda: aux_stack.append(";")
-
-    shift = 0  # indent level iff. indent is on
-    new_line = False  # new line flag, iff. indent is on
 
     def emit_block(obj: list, continuous: bool = False):
         """
@@ -102,18 +366,18 @@ def node2src(root: object, indent: int = 0) -> str:
         else:
             aux_stack.append("}")
 
-    def emit_tuple(obj: list, paren: bool = True):
+    def emit_tuple(obj: list, par: bool = True):
         """
         Push a list of components in tuple format
         Parameters:
             obj (list): the tuple body
-            paren (bool): whether to show the parentheses, i.e.
+            par (bool): whether to show the parentheses, i.e.
                 inheritance-specifier
         """
 
         nonlocal aux_stack
 
-        if paren is True:
+        if par is True:
             aux_stack.append("(")
 
         if len(obj) > 0:
@@ -122,7 +386,7 @@ def node2src(root: object, indent: int = 0) -> str:
                 aux_stack.append(",")
             aux_stack.append(obj[-1])
 
-        if paren is True:
+        if par is True:
             aux_stack.append(")")
 
     def emit_dict(values: list, keys: list | None = None, line_break: bool = False):
@@ -183,12 +447,12 @@ def node2src(root: object, indent: int = 0) -> str:
 
     def solidity(handler):
         """
-        The decorator indicating a grammar handler
+        This decorator indicates a grammar handler
 
         Any function with this decorator handles an AST node
         """
 
-        def wrapper(node, *args, **kwargs):
+        def solidity_wrapper(node, *args, **kwargs):
             nonlocal aux_stack
 
             try:
@@ -205,9 +469,9 @@ def node2src(root: object, indent: int = 0) -> str:
                 item = aux_stack.pop()
                 pre_ord_stack.append(item)
 
-        wrapper.solidity = True
-        return wrapper
-    
+        solidity_wrapper.solidity = True
+        return solidity_wrapper
+
     #####################################
     # Grammar handlers are defined here #
     #####################################
@@ -219,6 +483,8 @@ def node2src(root: object, indent: int = 0) -> str:
             emit(node.license)
             emit("\n")  # This is necessary and has nothing to do with indent
         emit(node.nodes)
+
+    # TODO using definition
 
     @solidity
     def ImportDirective(node):
@@ -246,7 +512,7 @@ def node2src(root: object, indent: int = 0) -> str:
         # inheritance
         if len(node.baseContracts) > 0:
             emit("is")
-            emit_tuple(node.baseContracts, paren=False)
+            emit_tuple(node.baseContracts, par=False)
         # contract body
         emit_block(node.nodes)
 
@@ -264,8 +530,8 @@ def node2src(root: object, indent: int = 0) -> str:
 
         # state-variable-definition / constant-variable-definition
         if (
-            node.parent().nodeType == "ContractDefinition"
-            or node.parent().nodeType == "SourceUnit"
+            node._parent.nodeType == "ContractDefinition"
+            or node._parent.nodeType == "SourceUnit"
         ):
             # type of the member, it's also a node
             emit(node.typeName)
@@ -297,7 +563,7 @@ def node2src(root: object, indent: int = 0) -> str:
             end_stmt()
 
         # struct-member
-        elif node.parent().nodeType == "StructDefinition":
+        elif node._parent.nodeType == "StructDefinition":
             # type of the member, it's also a node
             emit(node.typeName)
             # name of the member
@@ -305,7 +571,7 @@ def node2src(root: object, indent: int = 0) -> str:
             end_stmt()
 
         # parameter
-        elif node.parent().nodeType == "ParameterList":
+        elif node._parent.nodeType == "ParameterList":
             # type of the parameter, it's also a node
             emit(node.typeName)
             # indexed flag, for event parameter only
@@ -447,7 +713,7 @@ def node2src(root: object, indent: int = 0) -> str:
     @solidity
     def ElementaryTypeName(node):
         if hasattr(node, "stateMutability") and node.stateMutability == "payable":
-            if node.parent().nodeType == "ElementaryTypeNameExpression":
+            if node._parent.nodeType == "ElementaryTypeNameExpression":
                 # Handle address in expression differently, if its a payable
                 # address, use 'payable' instead of 'address payable' as
                 # specified in official documentation
@@ -489,7 +755,7 @@ def node2src(root: object, indent: int = 0) -> str:
             emit(node.declarations[0])
         emit("=")
         emit(node.initialValue)
-        caller = node.parent()
+        caller = node._parent
         # Special case in for statement:
         # Variable declaration statement is used as an expression
         if (
@@ -504,7 +770,7 @@ def node2src(root: object, indent: int = 0) -> str:
         emit(node.expression)
         # Special case in for statement:
         # Expression statement is used as an expression
-        caller = node.parent()
+        caller = node._parent
         if caller.nodeType == "ForStatement" and node is caller.loopExpression:
             return
         end_stmt()
@@ -527,7 +793,7 @@ def node2src(root: object, indent: int = 0) -> str:
         # Check if else branch present
         has_else = hasattr(node, "falseBody")
         # trueBody can be a list of nodes or a normal node
-        if isinstance(node.trueBody, (list, tuple)):
+        if isinstance(node.trueBody, list):
             # Do not insert line break if there's an else branch
             emit_block(node.trueBody, continuous=has_else)
         else:
@@ -536,7 +802,7 @@ def node2src(root: object, indent: int = 0) -> str:
         if has_else:
             emit("else")
             # falseBody can be a list of nodes or a normal node
-            if isinstance(node.falseBody, (list, tuple)):
+            if isinstance(node.falseBody, list):
                 emit_block(node.falseBody)
             else:
                 emit(node.falseBody)
@@ -590,7 +856,9 @@ def node2src(root: object, indent: int = 0) -> str:
     def FunctionCall(node):
         emit(node.expression)
         if len(node.names) > 0:
+            emit("(")  # Add parentheses manually since emit_dict() does not
             emit_dict(values=node.arguments, keys=node.names, line_break=False)
+            emit(")")
         else:
             emit_tuple(node.arguments)
 
@@ -664,6 +932,9 @@ def node2src(root: object, indent: int = 0) -> str:
     # To speed up pre-order visiting, we use stack-based iteration instead of
     # recursion.
     pre_ord_stack.append(root)
+
+    shift = 0  # indent level iff. indent is on
+    new_line = False  # new line flag, iff. indent is on
 
     while len(pre_ord_stack) > 0:
         x = pre_ord_stack.pop()
