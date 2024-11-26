@@ -5,7 +5,7 @@ from math import gcd
 from gmpy2 import gcdext
 from solcast.nodes import NodeBase
 
-from solidity import *
+from ..solidity.utils import *
 
 logger = logging.getLogger(__name__)
 

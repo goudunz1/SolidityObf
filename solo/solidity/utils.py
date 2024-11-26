@@ -1,7 +1,6 @@
 import logging
 import string
 from bisect import insort_left
-from copy import deepcopy
 from functools import partial
 from solcast.nodes import NodeBase, node_class_factory
 
@@ -11,6 +10,38 @@ AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
 AZazdollar_ = string.ascii_letters + "$_"
 
 fake_id = -1
+
+def from_standard_output_json(path):
+    """
+    Generates SourceUnit objects from a standard output json file.
+
+    Arguments:
+        path: path to the json file
+    """
+
+    output_json = json.load(Path(path).open())
+    return from_standard_output(output_json)
+
+
+def from_standard_output(output_json):
+    """
+    Generates SourceUnit objects from a standard output json as a dict.
+
+    Arguments:
+        output_json: dict of standard compiler output
+    """
+
+    source_nodes = [node_class_factory(v["ast"], None) for v in output_json["sources"].values()]
+    source_nodes = set_dependencies(source_nodes)
+    return source_nodes
+
+
+def from_ast(ast):
+    """
+    Generates a SourceUnit object from the given AST. Dependencies are not set.
+    """
+
+    return node_class_factory(ast, None)
 
 
 def fake_ast(**kwargs) -> dict:

@@ -2,8 +2,8 @@ import logging
 import random
 from collections import deque
 from solcast.nodes import NodeBase
-from solidity import *
-from opaqueConstants import random_name, random_number, opaque_int
+from ..solidity.utils import *
+from .oconst import random_name, random_number, opaque_int
 
 logger = logging.getLogger(__name__)
 
