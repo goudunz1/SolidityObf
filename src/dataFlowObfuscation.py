@@ -21,21 +21,31 @@ def extract_literals(node):
       #  print(f"Node   {node}")  # Debug print
         if Type == "bool":
             literal_storage["bool"].append(node.value)
+            index = len(literal_storage["bool"])
+            function = {"number": index, "name": "getBoolFunc", "typeIdentifier": "t_uint256", "typeString": "uint256"}
+            node.value = valueFuctionCall(function)
         elif Type == "string":
             literal_storage["str"].append(node.value)
+            index = len(literal_storage["bool"])
+            function = {"number": index, "name": "getStrFunc", "typeIdentifier": "t_string_storage_ptr",  "typeString": "string storage pointer"}
+            node.value = valueFuctionCall(function)
         elif Type == "uint256":
             literal_storage["int"].append(node.value)
+            index = len(literal_storage["bool"])
+            function = {"number": index, "name": "getIntFunc", "typeIdentifier": "t_address", "typeString": "address"}
+            node.value = valueFuctionCall(function)
         elif Type == "address":
             literal_storage["addr"].append(node.value)
-
+            index = len(literal_storage["bool"])
+            function = {"number": index, "name": "getAddrFunc", "typeIdentifier": "t_bool", "typeString": "bool"}
+            node.value = valueFuctionCall(function)
     if hasattr(node, 'nodes'):
         for child in node.nodes:
             extract_literals(child)
 def generate_constant_arrays(node):
+    contract = find_Contract(node)
     """Generate constant arrays for the extracted literals."""
     #constants = []
-   # for value in literal_storage.values():
-    #    print("Values" + str(value))
     for key in literal_storage.keys():
         print("key", key)
         if key == "int":
@@ -47,7 +57,7 @@ def generate_constant_arrays(node):
                 literalComponents = createDifferentLiteral(literal_int)
                 state.value.components.append(literalComponents)
                 print("state.value.components", state.value.components)
-                node[1].nodes.append(state)
+            contract.nodes.append(state)
 
         if key == "str":
             var_State = {"number":len(literal_storage["str"]), "type":"string", "name":"_string_constant"}
@@ -57,7 +67,7 @@ def generate_constant_arrays(node):
                 literal_int = {"kind": "string", "value": value}
                 literalComponents = createDifferentLiteral(literal_int)
                 state.value.components.append(literalComponents)
-                node[1].nodes.append(state)
+            contract.nodes.append(state)
 
         if key == "addr":
             var_State = {"number":len(literal_storage["addr"]), "type":"address", "name":"_address_constant"}
@@ -67,7 +77,7 @@ def generate_constant_arrays(node):
                 literal_int = {"kind": "number", "value": value}
                 literalComponents = createDifferentLiteral(literal_int)
                 state.value.components.append(literalComponents)
-                node[1].nodes.append(state)
+            contract.nodes.append(state)
 
         if key == "bool":
             var_State = {"number":len(literal_storage["bool"]), "type":"bool", "name":"_bool_constant"}
@@ -77,277 +87,50 @@ def generate_constant_arrays(node):
                 literal_int = {"kind": "bool", "value": value}
                 literalComponents = createDifferentLiteral(literal_int)
                 state.value.components.append(literalComponents)
-                node[1].nodes.append(state)
-            constants.append(NodeBase(array_ast, None))
+            contract.nodes.append(state)
+
     #return constants
+def generate_functions(node):
+    contract = find_Contract(node)
+    '''
+    boolFunction = {"functionName": "getBoolFunc", "name": "_bool_constant", "type": "bool", "typeIdentifier": "bool", "typeString":"bool", "typeReturn": "bool"}
+    stringFunction = {"functionName": "getStrFunc", "name": "_string_constant", "type": "string", "typeIdentifier": "string_storage", "typeString":"string storage ref", "typeReturn": "string_storage_ptr"}
+    addressFunction = {"functionName": "getAddrFunc", "name": "_address_constant", "type": "address", "typeIdentifier": "address", "typeString":"address", "typeReturn": "address"}
+    intFunction = {"functionName": "getIntFunc", "name": "_integer_constant", "type": "uint256", "typeIdentifier": "uint256", "typeString":"uint256", "typeReturn": "uint256"}
+    '''
+    boolFunction = {"functionName": "getBoolFunc", "type": "bool", "storage": "default"}
+    stringFunction = {"functionName": "getStrFunc", "name": "_string_constant", "type": "string", "storage": "storage"}
+    addressFunction = {"functionName": "getAddrFunc", "name": "_address_constant", "type": "address", "storage": "default"}
+    intFunction = {"functionName": "getIntFunc", "name": "_integer_constant", "type": "uint256", "storage": "default"}
+    bool = {"typeIdentifier": "bool", "typeString":"bool", "name": "_bool_constant"}
+    address = {"typeIdentifier": "address", "typeString":"address", "name": "_address_constant"}
+    int = {"typeIdentifier": "uint256", "typeString":"uint256", "name": "_integer_constant"}
+    string = {"typeIdentifier": "string_storage", "typeString":"string storage ref", "name": "_string_constant"}
+    function = FuctionCall(boolFunction)
+    functionStatement = FunctionStatement(bool)
+    print("function.body", function.body)
+    function.body.append(functionStatement)
+    functionStatement._parent = function
+    print("function.statement", functionStatement)
+    #function.body.statements.append()
+    contract.nodes.append(function)
+    #function.body._parent = function
+    #print("function.body", function.body)
+    #print("function.returnParameters", function.returnParameters)
+    function = FuctionCall(stringFunction)
+    functionStatement = FunctionStatement(string)
+    function.body.append(functionStatement)
+    contract.nodes.append(function)
+    function = FuctionCall(addressFunction)
+    functionStatement = FunctionStatement(address)
+    function.body.append(functionStatement)
+    contract.nodes.append(function)
+    function = FuctionCall(intFunction)
+    functionStatement = FunctionStatement(int)
+    function.body.append(functionStatement)
+    #print ("Function nodeType", function.nodeTyoe)
+    contract.nodes.append(function)
 
-#not right yet
-def generate_functions():
-    """Generate functions to retrieve the literals from the arrays."""
-    functions = []
-    for key in literal_storage.keys():
-        if key == "int":
-            func_ast = {
-                "nodeType": "FunctionDefinition",
-                "name": "getIntFunc",
-                "visibility": "internal",
-                "stateMutability": "view",
-                "parameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "uint256"
-                            },
-                            "name": "index",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "returnParameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "uint256"
-                            },
-                            "name": "",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "body": {
-                    "nodeType": "Block",
-                    "statements": [
-                        {
-                            "nodeType": "Return",
-                            "expression": {
-                                "nodeType": "IndexAccess",
-                                "baseExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "_integer_constant"
-                                },
-                                "indexExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "index"
-                                }
-                            }
-                        }
-                    ]
-                },
-                "src": "0:0:0"  # Dummy src attribute
-            }
-            functions.append(NodeBase(func_ast, None))
-        elif key == "str":
-            func_ast = {
-                "nodeType": "FunctionDefinition",
-                "name": "getStrFunc",
-                "visibility": "internal",
-                "stateMutability": "view",
-                "parameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "uint256"
-                            },
-                            "name": "index",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "returnParameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "string"
-                            },
-                            "name": "",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "body": {
-                    "nodeType": "Block",
-                    "statements": [
-                        {
-                            "nodeType": "Return",
-                            "expression": {
-                                "nodeType": "IndexAccess",
-                                "baseExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "_string_constant"
-                                },
-                                "indexExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "index"
-                                }
-                            }
-                        }
-                    ]
-                },
-                "src": "0:0:0"  # Dummy src attribute
-            }
-            functions.append(NodeBase(func_ast, None))
-        elif key == "addr":
-            func_ast = {
-                "nodeType": "FunctionDefinition",
-                "name": "getAddrFunc",
-                "visibility": "internal",
-                "stateMutability": "view",
-                "parameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "uint256"
-                            },
-                            "name": "index",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "returnParameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "address"
-                            },
-                            "name": "",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "body": {
-                    "nodeType": "Block",
-                    "statements": [
-                        {
-                            "nodeType": "Return",
-                            "expression": {
-                                "nodeType": "IndexAccess",
-                                "baseExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "_address_constant"
-                                },
-                                "indexExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "index"
-                                }
-                            }
-                        }
-                    ]
-                },
-                "src": "0:0:0"  # Dummy src attribute
-            }
-            functions.append(NodeBase(func_ast, None))
-        elif key == "bool":
-            func_ast = {
-                "nodeType": "FunctionDefinition",
-                "name": "getBoolFunc",
-                "visibility": "internal",
-                "stateMutability": "view",
-                "parameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "uint256"
-                            },
-                            "name": "index",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "returnParameters": {
-                    "nodeType": "ParameterList",
-                    "parameters": [
-                        {
-                            "nodeType": "VariableDeclaration",
-                            "typeName": {
-                                "nodeType": "ElementaryTypeName",
-                                "name": "bool"
-                            },
-                            "name": "",
-                            "storageLocation": "default",
-                            "isStateVar": False,
-                            "isIndexed": False
-                        }
-                    ]
-                },
-                "body": {
-                    "nodeType": "Block",
-                    "statements": [
-                        {
-                            "nodeType": "Return",
-                            "expression": {
-                                "nodeType": "IndexAccess",
-                                "baseExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "_bool_constant"
-                                },
-                                "indexExpression": {
-                                    "nodeType": "Identifier",
-                                    "name": "index"
-                                }
-                            }
-                        }
-                    ]
-                },
-                "src": "0:0:0"  # Dummy src attribute
-            }
-            functions.append(NodeBase(func_ast, None))
-    return functions
-
-#not right yet
-def replace_literals(node):
-    """Recursively replace literals with function calls."""
-    if hasattr(node, 'value'):
-        if isinstance(node.value, int):
-            index = literal_storage["int"].index(node.value)
-            node.value = createIdentifier(f"getIntFunc({index})")
-        elif isinstance(node.value, str):
-            index = literal_storage["str"].index(node.value)
-            node.value = createIdentifier(f"getStrFunc({index})")
-        elif isinstance(node.value, bool):
-            index = literal_storage["bool"].index(node.value)
-            node.value = createIdentifier(f"getBoolFunc({index})")
-        elif isinstance(node.value, dict) and node.value.get('type') == 'address':
-            index = literal_storage["addr"].index(node.value['value'])
-            node.value = createIdentifier(f"getAddrFunc({index})")
-
-    if hasattr(node, 'nodes'):
-        for child in node.nodes:
-            replace_literals(child)
 
 def obfuscate(node):
     """Obfuscate the input AST node by replacing literals with function calls."""
@@ -355,12 +138,14 @@ def obfuscate(node):
     # Exotract literals
     extract_literals(node)
     generate_constant_arrays(node)
-    '''
     # Generate dynamic functions
-    functions = generate_functions()
-    # Replace literals
-    replace_literals(node)
-    '''
+    generate_functions(node)
+    for nodes in contract.nodes:
+        nodes._parent = contract
+        #contract._children.add(nodes)
+        print("nodes._parent", nodes._parent)
+    print(contract.nodes)
+
 
     logger.debug("Data flow obfuscation completed")
     return node
