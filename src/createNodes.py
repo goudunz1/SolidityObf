@@ -58,16 +58,31 @@ def createVariable(variable_dict, parent=None):
 
 # 创建If语句
 def createIfStatement(parent=None):
-    # 可以先不填truebody及falsebody，设置statements，后面再填
     ast = {
             "condition": {
-            # 其中是binaryOperation
+            # the content is binaryOperation
             },
             "falseBody": {  "id": 47,
                             "nodeType": "Block",
                             "src": "317:169:0",
                             "statements":[]
                             },
+            "trueBody": {   "id": 47,
+                            "nodeType": "Block",
+                            "src": "317:169:0",
+                            "statements":[]
+                            },
+            "id": 48,
+            "nodeType": "IfStatement",
+            "src": "0:0:0"                 
+    }
+    return NodeBase(ast, parent)
+
+def createIfStatement_woF(parent=None):
+    ast = {
+            "condition": {
+            # 其中是binaryOperation
+            },
             "trueBody": {   "id": 47,
                             "nodeType": "Block",
                             "src": "317:169:0",

@@ -1199,11 +1199,13 @@ def ast_expr_stmt(expr: dict) -> dict:
 
 
 def ast_var_dec(name: str, value: int | None, const=False) -> dict:
+=======
+>>>>>>> ControlFlowFlatten
     # TODO other types
     if value is not None:
         return fake_ast(
             nodeType="VariableDeclaration",
-            typeName=ast_elem("int"),
+            typeName=ast_elem(elem_name),
             constant=const,
             storageLocation="default",
             name=name,
@@ -1212,7 +1214,7 @@ def ast_var_dec(name: str, value: int | None, const=False) -> dict:
     else:
         return fake_ast(
             nodeType="VariableDeclaration",
-            typeName=ast_elem("int"),
+            typeName=ast_elem(elem_name),
             constant=const,
             storageLocation="default",
             name=name,
@@ -1227,9 +1229,14 @@ def ast_var_dec_stmt(name: str, value: int) -> dict:
     )
 
 
-def ast_for_stmt(init_expr: dict, cond: dict, loop_expr: dict) -> dict:
-    # TODO
-    return fake_ast(nodeType="ForStatement")
+def ast_for_stmt(init_expr: dict, cond: dict, loop_expr: dict, body: list) -> dict:
+    return fake_ast(
+        nodeType="ForStatement",
+        initializationExpression=init_expr,
+        condition=cond,
+        loopExpression=loop_expr,
+        nodes=body,
+    )
 
 
 def ast_if_stmt(cond: dict, true_body: list, false_body: list | None = None) -> dict:
@@ -1245,11 +1252,10 @@ def ast_if_stmt(cond: dict, true_body: list, false_body: list | None = None) -> 
 
 
 def ast_while_stmt(cond: dict, body: dict, do=False):
-    # TODO
     if do is True:
-        return fake_ast(nodeType="DoWhileStatement")
+        return fake_ast(nodeType="DoWhileStatement", condition=cond, nodes=body)
     else:
-        return fake_ast(nodeType="WhileStatement")
+        return fake_ast(nodeType="WhileStatement", condition=cond, nodes=body)
 
 
 def gen_src(root: NodeBase, indent: int = 0) -> str:

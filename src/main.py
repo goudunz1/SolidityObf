@@ -8,7 +8,7 @@ import time
 from solcx import set_solc_version
 from solidity import gen_src
 
-#set_solc_version('0.8.28')
+set_solc_version('0.8.28')
 SOLC_VERSION = "0.8.28"
 
 #LOG_LEVEL = logging.INFO
