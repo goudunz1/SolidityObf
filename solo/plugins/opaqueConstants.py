@@ -1,11 +1,12 @@
 import logging
 import random
+
 from collections import deque
 from math import gcd
 from gmpy2 import gcdext
-from solcast.nodes import NodeBase
 
-from solidity import *
+from ..solidity.nodes import *
+from ..solidity.utils import *
 
 logger = logging.getLogger(__name__)
 
@@ -13,17 +14,17 @@ mask = lambda x: (1 << x) - 1  # 0x1111_1111_...
 
 OPAQUE0 = (
     # xor: x^y == x&~y|~x&y
-    lambda x_name, x, y_name, y: ast_sub(
-        ast_xor(ast_id(x_name), ast_id(y_name)),
-        ast_or(
-            ast_and(ast_id(x_name), ast_not(ast_id(y_name))),
-            ast_and(ast_not(ast_id(x_name)), ast_id(y_name)),
+    lambda x_name, x, y_name, y: SUB(
+        XOR(SYM(x_name), SYM(y_name)),
+        OR(
+            AND(SYM(x_name), NOT(SYM(y_name))),
+            AND(NOT(SYM(x_name)), SYM(y_name)),
         ),
     ),
     # De Morgan's law: ~x|y == ~(x&~y)
-    lambda x_name, x, y_name, y: ast_sub(
-        ast_or(ast_not(ast_id(x_name)), ast_id(y_name)),
-        ast_not(ast_and(ast_id(x_name), ast_not(ast_id(y_name)))),
+    lambda x_name, x, y_name, y: SUB(
+        OR(NOT(SYM(x_name)), SYM(y_name)),
+        NOT(AND(SYM(x_name), NOT(SYM(y_name)))),
     ),
     # Feel free to add more!
 )
@@ -87,15 +88,15 @@ def opaque_int(
 
     # sign is inverted twice or not inverted, We have aa*xx - bb*yy = m
     if sign is True:
-        expr = ast_sub(
-            ast_mul(ast_num(aa), ast_id(x_name)),
-            ast_mul(ast_num(bb), ast_id(y_name)),
+        expr = SUB(
+            MUL(NUM(aa), SYM(x_name)),
+            MUL(NUM(bb), SYM(y_name)),
         )
     # sign is inverted once, We have aa*xx - bb*yy = -m
     else:
-        expr = ast_sub(
-            ast_mul(ast_num(bb), ast_id(y_name)),
-            ast_mul(ast_num(aa), ast_id(x_name)),
+        expr = SUB(
+            MUL(NUM(bb), SYM(y_name)),
+            MUL(NUM(aa), SYM(x_name)),
         )
 
     return expr
@@ -106,7 +107,7 @@ def opaque_fixed() -> dict:
     pass
 
 
-def obfuscate(node: NodeBase) -> NodeBase:
+def run(node: SourceUnit) -> SourceUnit:
     """
     This function implements opaque constant obfuscation while keeping extra gas
     cost as low as possible
@@ -118,33 +119,30 @@ def obfuscate(node: NodeBase) -> NodeBase:
 
     logger.debug(f"Applying opaque constant obfuscation on {node}")
 
-    if node.nodeType != "SourceUnit":
-        return node
-
     # Generate const_x with a random name at beginning of the contract
     x, y = random_number(), random_number()
     while gcd(x, y) != 1:
         y = random_number()
     x_name, y_name = random_name(), random_name()  # TODO: label name conflict
-    x_dec, y_dec = ast_var_dec(x_name, x, const=True), ast_var_dec(
-        y_name, y, const=True
-    )
-    idx = 0
-    for n in node.nodes:
-        if n.nodeType in ("PragmaDirective", "UsingDirective", "ImportDirective"):
-            idx += 1
+    x_dec, y_dec = VARDEC(x_name, x, const=True), VARDEC(y_name, y, const=True)
+
+    index = 0
+    for n in node:
+        if isinstance(n, PragmaDirective):
+            index += 1
         else:
             break
-    as_node(parent=node, ast=y_dec, at="nodes", list_idx=idx)
-    as_node(parent=node, ast=x_dec, at="nodes", list_idx=idx)
+    node.main.insert(index, x_dec)
+    node.main.insert(index, y_dec)
     # TODO how to defend against compiler optimization of "constant variables"
 
     bfs_queue = deque([node])
 
     while len(bfs_queue) > 0:
         curr = bfs_queue.popleft()
-        # Order of the children does not matter, so we use the set _children
-        for n in curr._children:
+        # Order of the children does not matter, so we use the dict children
+        subnodes = copy(curr.children)
+        for n in subnodes:
 
             # We're stopping at expressions that has a type identifier of
             # *t_rational*
@@ -169,33 +167,31 @@ def obfuscate(node: NodeBase) -> NodeBase:
                             expr = opaque_int(value, x_name, x, y_name, y)
                             # Note that there'll be junk values in the high
                             # 128 bits of the result
-                            expr = ast_and(expr, ast_num(mask(128)))
+                            expr = AND(expr, NUM(mask(128)))
                         # 128 bits, but negative
                         elif (value >> 128) == -1:
                             expr = opaque_int(value, x_name, x, y_name, y)
                             # Because mask(128) << 128 can not be represented by
                             # int256, we generate the expression (-1) << 128
                             # instead
-                            expr = ast_or(
-                                expr, ast_lsh(ast_neg(ast_num(1)), ast_num(128))
-                            )
+                            expr = OR(expr, LSL(NEG(NUM(1)), NUM(128)))
                         # We cannot represent *value* using 128 bits
                         else:
                             value_low = value & mask(128)
                             value_high = value >> 128
                             expr_low = opaque_int(value_low, x_name, x, y_name, y)
-                            expr_low = ast_and(expr_low, ast_num(mask(128)))
+                            expr_low = AND(expr_low, NUM(mask(128)))
                             expr_high = opaque_int(value_high, x_name, x, y_name, y)
-                            expr = ast_or(expr_low, ast_lsh(expr_high, ast_num(128)))
+                            expr = OR(expr_low, LSL(expr_high, NUM(128)))
 
                         # Now expr holds a int that has the same bit
                         # representation as *value*
 
                         # TODO type conversion??
                         # TODO sub-denomination
-                        expr = ast_elem_conv("uint", expr)
+                        expr = ETYPECONV("uint", expr)
 
-                        replace_node(node=n, ast=expr)
+                        replace_with(n, expr)
 
                     # TODO fixed
                     else:
@@ -205,5 +201,7 @@ def obfuscate(node: NodeBase) -> NodeBase:
 
             # Otherwise, add the node to bfs queue and continue the loop
             bfs_queue.append(n)
+
+    logger.debug(f"Generating opaque constants done!")
 
     return node

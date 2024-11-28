@@ -162,5 +162,4 @@ cython_debug/
 #.idea/
 
 .vscode/
-test/test.sol
-test/*.obfuscated.sol
+test/*.out.sol

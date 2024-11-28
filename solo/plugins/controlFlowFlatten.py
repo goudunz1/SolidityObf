@@ -1,20 +1,24 @@
 import logging
 import random
 from copy import copy
-from collections import deque
-from solcast.nodes import NodeBase
+from typing import Iterable
+
+from ..solidity.nodes import *
+from ..solidity.utils import *
+from .opaqueConstants import random_name
 
 logger = logging.getLogger(__name__)
 
-class CodeSegment:
 
-    def __init__(self, state: int, next_state: int, body: list = []):
+class StateBlock:
+
+    def __init__(self, state: int, next_state: int, body: Iterable = []):
         self.state = state
-        self.body = body
+        self.body = list(body)
         self.next_state = next_state
 
 
-class StateSegment(CodeSegment):
+class StateSegment(StateBlock):
 
     def __init__(
         self,
@@ -31,7 +35,7 @@ class StateSegment(CodeSegment):
             self.continue_at = continue_at
 
 
-class BasicBlock(CodeSegment):
+class BasicBlock(StateBlock):
 
     def __init__(
         self,
@@ -53,7 +57,7 @@ class BasicBlock(CodeSegment):
 
 class CFG:
 
-    BRANCH_STMT = ("IfStatement", "ForStatement", "WhileStatement", "DoWhileStatement")
+    BRANCH_STMT = (IfStatement, ForStatement, WhileStatement, DoWhileStatement)
     STATE_LB = 1 << 127
     STATE_UB = (1 << 128) - 1
 
@@ -68,7 +72,7 @@ class CFG:
         self.seed = random.randint(CFG.STATE_LB, CFG.STATE_UB)
         self.rand = random.Random(x=self.seed)
         self.states = set()
-        self.blocks = {}
+        self.blocks: dict[int, BasicBlock] = {}
         self.init_state = self.gen_state()
         self.end_state = self.gen_state()
 
@@ -94,7 +98,7 @@ class CFG:
             jump_state=jump_state,
         )
 
-    def get_bb(self, state):
+    def get_bb(self, state: int):
         return self.blocks[state]
 
     @staticmethod
@@ -113,14 +117,14 @@ class CFG:
                 x = ss.body[i]
 
                 # Jump out statements
-                if x.nodeType == "Continue":
+                if isinstance(x, Continue):
                     if continue_at is None:
                         raise ValueError(
                             "A continue statement in non-loop environment, maybe the AST is broken??"
                         )
                     cfg.add_bb(state=ss.state, next_state=continue_at, body=ss.body[:i])
                     break
-                elif x.nodeType == "Break":
+                elif isinstance(x, Break):
                     if break_to is None:
                         raise ValueError(
                             "A break statement in non-loop environment, maybe the AST is broken??"
@@ -130,7 +134,7 @@ class CFG:
 
                 # Do BFS on the final branch if present
                 # Otherwise, the final state should be ss's next state
-                if x.nodeType in CFG.BRANCH_STMT:
+                if isinstance(x, CFG.BRANCH_STMT):
                     if i == len(ss.body) - 1:
                         final_state = ss.next_state
                     else:
@@ -145,7 +149,7 @@ class CFG:
                             )
                         )
 
-                if x.nodeType == "IfStatement":
+                if isinstance(x, IfStatement):
                     # Do BFS on the true branch
                     if len(x.trueBody) == 0:
                         true_state = final_state
@@ -186,7 +190,7 @@ class CFG:
 
                     break
 
-                elif x.nodeType == "ForStatement":
+                elif isinstance(x, ForStatement):
                     cond_state = cfg.gen_state()
                     loop_state = cfg.gen_state()
 
@@ -195,7 +199,7 @@ class CFG:
                         StateSegment(
                             state=true_state,
                             next_state=loop_state,
-                            body=[*x.nodes, x.loopExpression],
+                            body=[*x.body, x.loopExpression],
                             continue_at=loop_state,
                             break_to=final_state,
                         )
@@ -223,12 +227,12 @@ class CFG:
 
                     break
 
-                elif x.nodeType.endswith("WhileStatement"):
+                elif isinstance(x, (WhileStatement, DoWhileStatement)):
                     # Pre-compute state of the condition block
                     cond_state = cfg.gen_state()
 
                     # Do BFS on while body
-                    if len(x.nodes) == 0:
+                    if len(x.body) == 0:
                         true_state = cond_state
                     else:
                         true_state = cfg.gen_state()
@@ -236,14 +240,14 @@ class CFG:
                             StateSegment(
                                 state=true_state,
                                 next_state=cond_state,
-                                body=x.nodes,
+                                body=x.body,
                                 continue_at=cond_state,
                                 break_to=final_state,
                             )
                         )
 
                     # Add the beginning block
-                    if x.nodeType == "WhileStatement":  # while
+                    if isinstance(x, WhileStatement):  # while
                         cfg.add_bb(
                             state=ss.state, next_state=cond_state, body=ss.body[:i]
                         )
@@ -266,47 +270,48 @@ class CFG:
 
         return cfg
 
-def obfuscate(node: NodeBase) -> NodeBase:
+
+def run(node: SourceUnit) -> SourceUnit:
+
+    # for test
+    sb = SourceBuilder()
 
     logger.debug(f"Applying CFF on {node}")
 
-
     # traverse the ast to insert opaque predicates
+    for func in node.functions:
+        if hasattr(func, "body"):
+            body: Block = func.body
+            cfg = CFG.gen_cfg(body)
 
-    bfs_queue = deque([node])  # BFS deque
-    while len(bfs_queue) > 0:
+            state_name = random_name()
+            state_stmt = VARSTMT(name=state_name, value=cfg.init_state)
+            exit_cond = NE(SYM(state_name), NUM(cfg.end_state))
 
-        n = bfs_queue.popleft()
+            switch_body = []
+            for state in cfg.blocks:
+                if state == cfg.end_state:
+                    continue
 
-        if n.nodeType in ("FunctionDefinition", "ModifierDefinition"):
-            if hasattr(n, "nodes"):
-                cfg = CFG.gen_cfg(n.nodes)
+                bb = cfg.blocks[state]
+                case_body = copy(bb.body)
+                if hasattr(bb, "cond"):
+                    state_update = IF(
+                        cond=bb.cond,
+                        true_body=ASSIGN(SYM(state_name), NUM(bb.jump_state)),
+                        false_body=ASSIGN(SYM(state_name), NUM(bb.next_state)),
+                    )
+                else:
+                    state_update = ASSIGN(SYM(state_name), NUM(bb.next_state))
+                case_body.append(state_update)
+                case_body.append(CONTINUE())
 
-                # Purge function body
-                for x in n.nodes:
-                    n._children.remove(x)
-                    x._parent = None
-                n.nodes = []
+                case_cond = EQ(SYM(state_name), NUM(state))
+                switch_body.append(IF(cond=case_cond, true_body=BLK(case_body)))
 
-                s_name = random_name()
-                s_dec_stmt = ast_var_dec_stmt(name=s_name, value=cfg.init_state)
+            while_stmt = WHILE(cond=exit_cond, body=BLK(switch_body), do=False)
+            body.main = [state_stmt, while_stmt]
 
-                if_list = []
-                for state in cfg.blocks:
-                    cond = ast_eq(ast_id(s_name), ast_num(state))
-                    if_list.append(ast_if_stmt(cond=cond, true_body=[])) # true body to be filled
-
-                exit_cond = ast_ne(ast_id(s_name), ast_num(cfg.end_state))
-                while_stmt = ast_while_stmt(cond=exit_cond, body=if_list, do=False)
-
-                as_node(n, ast=while_stmt, at="nodes", list_idx=0)
-                as_node(n, ast=s_dec_stmt, at="nodes", list_idx=0)
-        
-        if n.nodeType in ("ContractDefinition", "SourceUnit"):
-            for child in n._children:
-                bfs_queue.append(child)
-    
     logger.debug("CFF done!")
-
 
     return node
