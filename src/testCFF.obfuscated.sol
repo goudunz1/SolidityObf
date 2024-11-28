@@ -1,4 +1,4 @@
-pragmasolidity 0.8.28;
+pragma solidity 0.8.28;
 contract PrimeChecker{
   function isPrime(uint256 number)external pure returns(bool){
     uint256 state0=0;

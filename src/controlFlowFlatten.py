@@ -128,105 +128,126 @@ def extractBlockFromTree(node, block_list, level=0):
 def obfuscate(node):
     global Index
     # 查询while节点(可能有多个)
-    while_Nodes = find_While_and_If_Statement(
-        node[1],
-    )
-    # print(while_Nodes)
-    statenumber = 0
-    for while_Node in while_Nodes:
-        parent = while_Node.parent()  # 父节点
+    f_node = []
+    for index, element in enumerate(node.nodes):
+        if element.nodeType == "ContractDefinition":
+            f_node.append(index)
+    for n in f_node:
+        while_Nodes = find_While_and_If_Statement(
+            node[n]
+        )
+        
+        # print(while_Nodes)
+        statenumber = 0
+        for while_Node in while_Nodes:
+            parent = while_Node.parent()  # 父节点
 
-        # 创建state状态变量，插入到控制流之前
-        var_State = {"type": "uint256", "name": f"state{statenumber}", "value": "0"}
-        state = createVariable(var_State, parent)
-        index = parent.nodes.index(while_Node)
-        parent.nodes.insert(index, state)
+            # 创建state状态变量，插入到控制流之前
+            var_State = {"type": "uint256", "name": f"state{statenumber}", "value": "0"}
+            state = createVariable(var_State, parent)
+            index = parent.nodes.index(while_Node)
+            parent.nodes.insert(index, state)
 
-        # 创建控制流图
-        root = TreeNode(while_Node)
-        root.nodeType = "root"
-        create_CFgraph(root)
+            # 创建控制流图
+            root = TreeNode(while_Node)
+            root.nodeType = "root"
+            create_CFgraph(root)
 
-        # 提取基本块
-        block_list = []
-        extractBlockFromTree(root, block_list)
-        # print("+++++:",block_list)
+            # 提取基本块
+            block_list = []
+            extractBlockFromTree(root, block_list)
+            # print("+++++:",block_list)
 
-        # 根据基本块及控制流图进行ControlFlow_Flatten
-        node_list = []
-        for child in block_list:
-            if1 = createIfStatement_woF()
-            binary_condition = {"left":f"state{statenumber}", "operator":"==", "right": child.index}
-            condition = createBinaryOperation(binary_condition)
-            if1.condition = condition
-            #if1.fields.remove("falseBody")
+            # 根据基本块及控制流图进行ControlFlow_Flatten
+            node_list = []
+            for child in block_list:
+                if1 = createIfStatement_woF()
+                binary_condition = {"left":f"state{statenumber}", "operator":"==", "right": child.index}
+                condition = createBinaryOperation(binary_condition)
+                if1.condition = condition
+                #if1.fields.remove("falseBody")
 
-            if child.nodeType == "IF":
-                trueBody = createIfStatement(if1)
-                inner_condition = child.value.condition
-                jump_index2 = -2
-                for i in child.children:
-                    if i.nodeType == "tbody":
-                        jump_index1 = i.index
-                    elif i.nodeType == "fbody":
-                        jump_index2 = i.index
-                inner_trueBody = createEpression(
-                    {"name": f"state{statenumber}", "value": str(jump_index1)}, trueBody
-                )
-                if jump_index2 < 0:
-                    #trueBody.fields.remove("falseBody")
-                    trueBody = createIfStatement_woF(if1)
-                else:
-                    inner_falseBody = createEpression(
-                        {"name": f"state{statenumber}", "value": str(jump_index2)},
-                        trueBody,
+                if child.nodeType == "IF":
+                    trueBody = createIfStatement(if1)
+                    inner_condition = child.value.condition
+                    jump_index2 = -2
+                    for i in child.children:
+                        if i.nodeType == "tbody":
+                            jump_index1 = i.index
+                        elif i.nodeType == "fbody":
+                            jump_index2 = i.index
+                    inner_trueBody = createEpression(
+                        {"name": f"state{statenumber}", "value": str(jump_index1)}, trueBody
                     )
-                    trueBody.falseBody.append(inner_falseBody)
-                trueBody.condition = inner_condition
-                trueBody.trueBody.append(inner_trueBody)
-                if1.trueBody = [trueBody]
+                    if jump_index2 < 0:
+                        #trueBody.fields.remove("falseBody")
+                        trueBody = createIfStatement_woF(if1)
+                    else:
+                        inner_falseBody = createEpression(
+                            {"name": f"state{statenumber}", "value": str(jump_index2)},
+                            trueBody,
+                        )
+                        trueBody.falseBody.append(inner_falseBody)
+                    trueBody.condition = inner_condition
+                    trueBody.trueBody.append(inner_trueBody)
+                    if1.trueBody = [trueBody]
 
-            elif child.nodeType in ("tbody", "fbody"):
-                flag = False
-                for i in child.value:
-                    if i.nodeType == "IfStatement":
-                        flag = True
-                        break
-                if flag == True:
-                    for children in child.children:
-                        if children.nodeType == "IF":
-                            trueBody = createIfStatement(if1)
-                            inner_condition = children.value.condition
-                            jump_index2 = -2
-                            for i in children.children:
-                                if i.nodeType == "tbody":
-                                    jump_index1 = i.index
-                                elif i.nodeType == "fbody":
-                                    jump_index2 = i.index
-                            inner_trueBody = createEpression(
-                                {
-                                    "name": f"state{statenumber}",
-                                    "value": str(jump_index1),
-                                },
-                                trueBody,
-                            )
-                            if jump_index2 < 0:
-                                #trueBody.fields.remove("falseBody")
-                                trueBody = createIfStatement_woF(if1)
-                            else:
-                                inner_falseBody = createEpression(
+                elif child.nodeType in ("tbody", "fbody"):
+                    flag = False
+                    for i in child.value:
+                        if i.nodeType == "IfStatement":
+                            flag = True
+                            break
+                    if flag == True:
+                        for children in child.children:
+                            if children.nodeType == "IF":
+                                trueBody = createIfStatement(if1)
+                                inner_condition = children.value.condition
+                                jump_index2 = -2
+                                for i in children.children:
+                                    if i.nodeType == "tbody":
+                                        jump_index1 = i.index
+                                    elif i.nodeType == "fbody":
+                                        jump_index2 = i.index
+                                inner_trueBody = createEpression(
                                     {
                                         "name": f"state{statenumber}",
-                                        "value": str(jump_index2),
+                                        "value": str(jump_index1),
                                     },
                                     trueBody,
                                 )
-                                trueBody.falseBody.append(inner_falseBody)
-                            trueBody.condition = inner_condition
-                            trueBody.trueBody.append(inner_trueBody)
-                            if1.trueBody = [trueBody]
-                            break
-                else:
+                                if jump_index2 < 0:
+                                    #trueBody.fields.remove("falseBody")
+                                    trueBody = createIfStatement_woF(if1)
+                                else:
+                                    inner_falseBody = createEpression(
+                                        {
+                                            "name": f"state{statenumber}",
+                                            "value": str(jump_index2),
+                                        },
+                                        trueBody,
+                                    )
+                                    trueBody.falseBody.append(inner_falseBody)
+                                trueBody.condition = inner_condition
+                                trueBody.trueBody.append(inner_trueBody)
+                                if1.trueBody = [trueBody]
+                                break
+                    else:
+                        inner_ExpressionList = []
+                        _index = get_sibling_index(child)
+                        if _index == None:
+                            _index = 0
+                        inner_Expression = createEpression(
+                            {"name": f"state{statenumber}", "value": str(_index)}, if1
+                        )
+
+                        for i in child.value:
+
+                            inner_ExpressionList.append(i)
+                        inner_ExpressionList.append(inner_Expression)
+                        if1.trueBody = inner_ExpressionList
+
+                elif child.nodeType == "expList":
                     inner_ExpressionList = []
                     _index = get_sibling_index(child)
                     if _index == None:
@@ -234,42 +255,28 @@ def obfuscate(node):
                     inner_Expression = createEpression(
                         {"name": f"state{statenumber}", "value": str(_index)}, if1
                     )
-
+                    # inner_Expression.parent = if1
                     for i in child.value:
-
+                        # i.parent = if1
                         inner_ExpressionList.append(i)
                     inner_ExpressionList.append(inner_Expression)
                     if1.trueBody = inner_ExpressionList
+                node_list.append(if1)
 
-            elif child.nodeType == "expList":
-                inner_ExpressionList = []
-                _index = get_sibling_index(child)
-                if _index == None:
-                    _index = 0
-                inner_Expression = createEpression(
-                    {"name": f"state{statenumber}", "value": str(_index)}, if1
-                )
-                # inner_Expression.parent = if1
-                for i in child.value:
-                    # i.parent = if1
-                    inner_ExpressionList.append(i)
-                inner_ExpressionList.append(inner_Expression)
-                if1.trueBody = inner_ExpressionList
-            node_list.append(if1)
+            # 向while节点中添加
+            if while_Node.nodeType == "WhileStatement":
+                while_Node.nodes = node_list
+            else:
+                index = parent.nodes.index(while_Node)
+                parent.nodes.pop(index)
+                parent.nodes[index:index] = node_list
 
-        # 向while节点中添加
-        if while_Node.nodeType == "WhileStatement":
-            while_Node.nodes = node_list
-        else:
-            index = parent.nodes.index(while_Node)
-            parent.nodes.pop(index)
-            parent.nodes[index:index] = node_list
-
-        # 重置stateNumber
-        statenumber += 1
-        # 重置index
-        Index = 0
-
+            
+            # 重置stateNumber
+            statenumber += 1
+            # 重置index
+            Index = 0
+    return node    
 
 # 给定一个节点，查询该节点祖先的兄弟节点，如果有某个兄弟节点是Expression类型的话，则返回该兄弟节点的index
 def get_sibling_index(node: TreeNode):
