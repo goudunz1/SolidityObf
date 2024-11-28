@@ -1,5 +1,7 @@
 """
-This file is a simplified version of py-solcast/nodes.py
+This file is a augmented version of py-solcast/nodes.py
+
+The original license:
 
 MIT License
 
@@ -24,275 +26,815 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import functools
-from copy import deepcopy
+import logging
+import itertools
+import string
+
+from copy import copy, deepcopy
+from collections import deque
+from typing import override
+
+logger = logging.getLogger(__name__)
+
 
 class NodeBase:
-    """Represents a node within the solidity AST.
+    """
+    Represents a node within the solidity AST.
 
     Attributes:
-        depth: Number of nodes between this node and the SourceUnit
         offset: Absolute source offsets as a (start, stop) tuple
         contract_id: Contract ID as given by the standard compiler JSON
         fields: List of attributes for this node
     """
 
-    def __init__(self, ast, parent):
-        self.depth = parent.depth + 1 if parent is not None else 0
-        self._parent = parent
-        self._children = set()
-        src = [int(i) for i in ast["src"].split(":")]
-        self.offset = (src[0], src[0] + src[1])
-        self.contract_id = src[2]
-        self.fields = sorted(ast.keys())
+    def __init__(self, ast: dict, parent: "NodeBase" = None):
+        # We assign parent of the node when constructing it, but bind it to
+        # parent's _children set later when we mount/set it on its parent.
+        self.parent: NodeBase = parent
+        self.children: dict = {}
+        self.fields: set = set()
+
+        if "src" in ast:
+            src: str = ast.pop("src")
+            src = [int(i) for i in src.split(":")]
+            self.offset = (src[0], src[0] + src[1])
+            self.contract_id = src[2]
+        else:
+            self.offset = (0, 0)
+            self.contract_id = -1
 
         for key, value in ast.items():
-            if isinstance(value, dict) and value.get("nodeType") == "Block":
-                value = value["statements"]
-            elif key == "body" and not value:
-                value = []
-            if isinstance(value, dict):
-                item = node_class_factory(value, self)
-                if isinstance(item, NodeBase):
-                    self._children.add(item)
-                setattr(self, key, item)
-            elif isinstance(value, list):
-                items = [node_class_factory(i, self) for i in value]
-                setattr(self, key, items)
-                self._children.update(i for i in items if isinstance(i, NodeBase))
-            else:
-                setattr(self, key, value)
+            if isinstance(value, (dict, list)):
+                value = node_class_factory(ast=value, parent=self)
+            elif isinstance(value, NodeBase):
+                if value.parent is not None:
+                    value = deepcopy(value)
+                value.parent = self
 
-    def __hash__(self):
-        return hash(f"{self.nodeType}{self.depth}{self.offset}")
+            self.fields.add(key)
+            setattr(self, key, value)
 
-    def __repr__(self):
-        repr_str = f"<{self.nodeType}"
-        if hasattr(self, "nodes"):
+            if isinstance(value, list):
+                for i in range(len(value)):
+                    if isinstance(value[i], NodeBase):
+                        self.children[value[i]] = (key, i)
+            elif isinstance(value, NodeBase):
+                self.children[value] = key
+
+    def __repr__(self) -> str:
+        repr_str = f"<{type(self).__name__}"
+        if isinstance(self, IterableNodeBase):
             repr_str += " iterable"
-        if hasattr(self, "type"):
-            if isinstance(self.type, str):
-                repr_str += f" {self.type}"
-            else:
-                repr_str += f" {self.type._display()}"
-        if self._display():
-            repr_str += f" '{self._display()}'"
+        if hasattr(self, "name") and hasattr(self, "value"):
+            repr_str += f" {self.name} = {self.value}"
         else:
-            repr_str += " object"
+            for attr in ("name", "value", "absolutePath"):
+                if hasattr(self, attr):
+                    repr_str += f" {getattr(self, attr)}"
+            else:
+                repr_str += " object"
         return f"{repr_str}>"
 
-    def _display(self):
-        if hasattr(self, "name") and hasattr(self, "value"):
-            return f"{self.name} = {self.value}"
-        for attr in ("name", "value", "absolutePath"):
-            if hasattr(self, attr):
-                return f"{getattr(self, attr)}"
-        return ""
-
-    def children(
-        self,
-        depth=None,
-        include_self=False,
-        include_parents=True,
-        include_children=True,
-        required_offset=None,
-        offset_limits=None,
-        filters=None,
-        exclude_filter=None,
-    ):
-        """Get childen nodes of this node.
-
-        Arguments:
-          depth: Number of levels of children to traverse. 0 returns only this node.
-          include_self: Includes this node in the results.
-          include_parents: Includes nodes that match in the results, when they also have
-                        child nodes that match.
-          include_children: If True, as soon as a match is found it's children will not
-                            be included in the search.
-          required_offset: Only match nodes with a source offset that contains this offset.
-          offset_limits: Only match nodes when their source offset is contained inside
-                           this source offset.
-          filters: Dictionary of {attribute: value} that children must match. Can also
-                   be given as a list of dicts, children that match one of the dicts
-                   will be returned.
-          exclude_filter: Dictionary of {attribute:value} that children cannot match.
-
-        Returns:
-            List of node objects."""
-        if filters is None:
-            filters = {}
-        if exclude_filter is None:
-            exclude_filter = {}
-        if isinstance(filters, dict):
-            filters = [filters]
-        filter_fn = functools.partial(
-            _check_filters, required_offset, offset_limits, filters, exclude_filter
-        )
-        find_fn = functools.partial(_find_children, filter_fn, include_parents, include_children)
-        result = find_fn(find_fn, depth, self)
-        if include_self or not result or result[0] != self:
-            return result
-        return result[1:]
-
-    def parents(self, depth=-1, filters=None):
-        """Get parent nodes of this node.
-
-        Arguments:
-            depth: Depth limit. If given as a negative value, it will be subtracted
-                   from this object's depth.
-            filters: Dictionary of {attribute: value} that parents must match.
-
-        Returns: list of nodes"""
-        if filters and not isinstance(filters, dict):
-            raise TypeError("Filters must be a dict")
-        if depth < 0:
-            depth = self.depth + depth
-        if depth >= self.depth or depth < 0:
-            raise IndexError("Given depth exceeds node depth")
-        node_list = []
-        parent = self
-        while True:
-            parent = parent._parent
-            if not filters or _check_filter(parent, filters, {}):
-                node_list.append(parent)
-            if parent.depth == depth:
-                return node_list
-
-    def parent(self, depth=-1, filters=None):
-        """Get a parent node of this node.
-
-        Arguments:
-            depth: Depth limit. If given as a negative value, it will be subtracted
-                   from this object's depth. The parent at this exact depth is returned.
-            filters: Dictionary of {attribute: value} that the parent must match.
-
-        If a filter value is given, will return the first parent that meets the filters
-        up to the given depth. If none is found, returns None.
-
-        If no filter is given, returns the parent at the given depth."""
-        if filters and not isinstance(filters, dict):
-            raise TypeError("Filters must be a dict")
-        if depth < 0:
-            depth = self.depth + depth
-        if depth >= self.depth or depth < 0:
-            raise IndexError("Given depth exceeds node depth")
-        parent = self
-        while parent.depth > depth:
-            parent = parent._parent
-            if parent.depth == depth and not filters:
-                return parent
-            if filters and _check_filter(parent, filters, {}):
-                return parent
-        return None
-
-    def is_child_of(self, node):
-        """Checks if this object is a child of the given node object."""
-        if node.depth >= self.depth:
-            return False
-        return self.parent(node.depth) == node
-
-    def is_parent_of(self, node):
-        """Checks if this object is a parent of the given node object."""
-        if node.depth <= self.depth:
-            return False
-        return node.parent(self.depth) == self
-
-    def get(self, key, default=None):
-        """
-        Gets an attribute from this node, if that attribute exists.
-
-        Arguments:
-            key: Field name to return. May contain decimals to return a value
-                 from a child node.
-            default: Default value to return.
-
-        Returns: Field value if it exists. Default value if not.
-        """
-        if key is None:
-            raise TypeError("Cannot match against None")
-        obj = self
-        for k in key.split("."):
-            if isinstance(obj, dict):
-                obj = obj.get(k)
-            else:
-                obj = getattr(obj, k, None)
-        return obj or default
+    def tokenize(self, sb: "SourceBuilder"):
+        pass
 
 
 class IterableNodeBase(NodeBase):
-    def __getitem__(self, key):
-        if isinstance(key, str):
-            try:
-                return next(i for i in self.nodes if getattr(i, "name", None) == key)
-            except StopIteration:
-                raise KeyError(key)
-        return self.nodes[key]
+
+    ITERABLE = "nodes"
+
+    @property
+    def iterable(self) -> list:
+        return getattr(self, self.__class__.ITERABLE)
+
+    @iterable.setter
+    def iterable(self, value: list):
+
+        for o in getattr(self, self.__class__.ITERABLE):
+            if isinstance(o, NodeBase):
+                o.parent = None
+                self.children.pop(o)
+
+        value = copy(value)
+
+        for idx in range(len(value)):
+            obj = value[idx]
+            if isinstance(obj, NodeBase):
+                if obj.parent is not None:
+                    value[idx] = obj = deepcopy(obj)
+                obj.parent = self
+                self.children[obj] = ("iterable", idx)
+
+        setattr(self, self.__class__.ITERABLE, value)
+
+    def insert(self, index: int, value: object):
+
+        self.iterable.insert(index, value)
+
+        if isinstance(value, NodeBase):
+            if value.parent is not None:
+                value = deepcopy(value)
+            value.parent = self
+            self.children[value] = ("iterable", index)
+
+    def __getitem__(self, index: int) -> object:
+        return self.iterable[index]
+
+    def __setitem__(self, index: int, value: object):
+        original = self.iterable[index]
+        if isinstance(original, NodeBase):
+            self.children.pop(original)
+            original.parent = None
+
+        if isinstance(value, NodeBase):
+            self.children[value] = ("iterable", index)
+            value.parent = self
+
+        self.iterable[index] = value
+
+    def __delitem__(self, index: int):
+        original = self.iterable[index]
+        if isinstance(original, NodeBase):
+            self.children.pop(original)
+
+        del self.iterable[index]
 
     def __iter__(self):
-        return iter(self.nodes)
+        return iter(self.iterable)
 
     def __len__(self):
-        return len(self.nodes)
+        return len(self.iterable)
 
     def __contains__(self, obj):
-        return obj in self.nodes
+        return obj in self.iterable
 
 
-def node_class_factory(ast, parent):
-    ast = deepcopy(ast)
-    if not isinstance(ast, dict) or "nodeType" not in ast:
-        return ast
-    if "body" in ast:
-        ast["nodes"] = ast.pop("body")
-    base_class = IterableNodeBase if "nodes" in ast else NodeBase
-    base_type = next((k for k, v in BASE_NODE_TYPES.items() if ast["nodeType"] in v), None)
-    if base_type:
-        ast["baseNodeType"] = base_type
-    return type(ast["nodeType"], (base_class,), {})(ast, parent)
+class SourceUnit(IterableNodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        if hasattr(self, "license"):
+            sb.add("//SPDX-License-Identifier:").add(self.license).add("\n")
+        sb.add_all(self.nodes)
 
 
-def _check_filters(required_offset, offset_limits, filters, exclude, node):
-    if required_offset and not is_inside_offset(required_offset, node.offset):
-        return False
-    if offset_limits and not is_inside_offset(node.offset, offset_limits):
-        return False
-    for f in filters:
-        if _check_filter(node, f, exclude):
-            return True
-    return False
+class PragmaDirective(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("pragma").add_all(self.literals).add_semi()
 
 
-def _check_filter(node, filters, exclude):
-    for key, value in filters.items():
-        if node.get(key) != value:
-            return False
-    for key, value in exclude.items():
-        if node.get(key) == value:
-            return False
-    return True
+class ContractDefinition(IterableNodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # abstract flag
+        if self.abstract is True:
+            # For interface and library this's always False
+            sb.add("abstract")
+        # interface, contract or library
+        sb.add(self.contractKind).add(self.name)
+        # inheritance
+        if len(self.baseContracts) > 0:
+            sb.add("is").add_tuple(self.baseContracts, pretty=False)
+        # contract body
+        sb.add_blk(self.nodes)
 
 
-def _find_children(filter_fn, include_parents, include_children, find_fn, depth, node):
-    if depth is not None:
-        depth -= 1
-        if depth < 0:
-            return [node] if filter_fn(node) else []
-    if not include_children and filter_fn(node):
-        return [node]
-    node_list = []
-    for child in node._children:
-        node_list.extend(find_fn(find_fn, depth, child))
-    if (include_parents or not node_list) and filter_fn(node):
-        node_list.insert(0, node)
-    return node_list
+class Block(IterableNodeBase):
+
+    ITERABLE = "statements"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add_blk(self.statements)
 
 
-def is_inside_offset(inner, outer):
-    """Checks if the first offset is contained in the second offset
+class InheritanceSpecifier(NodeBase):
 
-    Args:
-        inner: inner offset tuple
-        outer: outer offset tuple
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.baseName)
 
-    Returns: bool"""
-    return outer[0] <= inner[0] <= inner[1] <= outer[1] 
+
+class UserDefinedValueTypeDefinition(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("type").add(self.name).add("is").add(self.underlyingType).add_semi()
+
+
+class FunctionDefinition(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # constructor-definition
+        if self.kind == "constructor":
+            sb.add("constructor").add(self.parameters)
+            # list of modifiers
+            if len(self.modifiers) > 0:
+                sb.add_all(self.modifiers)
+            # state mutability, can only be "payable" for constructors
+            if self.stateMutability == "payable":
+                sb.add("payable")
+            # Function body is a must for constructors
+            sb.add(self.body)
+
+        # function-definition
+        elif self.kind == "function" or self.kind == "freeFunction":
+            sb.add("function").add(self.name).add(self.parameters)
+            # Visibility is meaningless for free functions
+            # public, external, internal, etc.
+            if self.kind != "freeFunction":
+                sb.add(self.visibility)
+            # state mutability
+            # Do not visualize "nonpayable"
+            if self.stateMutability != "nonpayable":
+                sb.add(self.stateMutability)
+            # list of modifiers
+            if len(self.modifiers) > 0:
+                sb.add_all(self.modifiers)
+            # can be overridden?
+            if self.virtual is True:
+                sb.add("virtual")
+            # overrides any prototype?
+            if hasattr(self, "overrides"):
+                sb.add(self.overrides)
+            # return parameters
+            if len(self.returnParameters.parameters) > 0:
+                sb.add("returns").add(self.returnParameters)
+            # function body, could be empty or not implemented
+            if hasattr(self, "body"):
+                sb.add(self.body)
+            else:
+                sb.add_semi()
+
+        else:
+            raise ValueError(f"Unknown function kind {self.kind}, please fix this!")
+
+
+class ModifierInvocation(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.modifierName).add_tuple(self.arguments)
+
+
+class OverrideSpecifier(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("override").add_tuple(self.overrides)
+
+
+class ModifierDefinition(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("modifier").add(self.name).add(self.parameters)
+        # can be overridden?
+        if self.virtual is True:
+            sb.add("virtual")
+        # overrides any prototype?
+        if hasattr(self, "overrides"):
+            sb.add(self.overrides)
+        # modifier body, could be empty or not implemented
+        if hasattr(self, "body"):
+            sb.add(self.body)
+        else:
+            sb.add_semi()
+
+
+class ParameterList(IterableNodeBase):
+
+    ITERABLE = "parameters"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add_tuple(self.parameters)
+
+
+class EventDefinition(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("event").add(self.name).add(self.parameters)
+        # is it anonymous?
+        if self.anonymous is True:
+            sb.add("anonymous")
+        sb.add_semi()
+
+
+class ErrorDefinition(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("error").add(self.name).add(self.parameters).add_semi()
+
+
+class EnumDefinition(IterableNodeBase):
+
+    ITERABLE = "members"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("enum").add(self.name).add_dict(values=self.members, keys=None)
+
+
+class EnumValue(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.name)
+
+
+class StructDefinition(IterableNodeBase):
+
+    ITERABLE = "members"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("struct").add(self.name).add_blk(self.members)
+
+
+class VariableDeclaration(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # state-variable-definition / constant-variable-definition
+        if isinstance(self.parent, ContractDefinition) or isinstance(
+            self.parent, SourceUnit
+        ):
+            # type of the member, it's also a node
+            sb.add(self.typeName)
+            # constant-variable-definition check
+            if self.constant is True:
+                sb.add("constant")
+            # special attributes of state-variable-definition
+            else:
+                # public, private, internal, etc.
+                # no need to visualize default value "internal"
+                if hasattr(self, "visibility") and self.visibility != "internal":
+                    sb.add(self.visibility)
+                # immutable flag
+                if self.mutability == "immutable":
+                    sb.add("immutable")
+                # state variable location, default or transient
+                elif self.storageLocation != "default":
+                    sb.add(self.storageLocation)
+                # overrides any prototype?
+                if hasattr(self, "overrides"):
+                    sb.add(self.overrides)
+            # name of the variable
+            sb.add(self.name)
+            # initial value
+            # Note that transient state variable has no initial value
+            if hasattr(self, "value"):
+                sb.add("=").add(self.value)
+            sb.add_semi()
+
+        # struct-member
+        elif isinstance(self.parent, StructDefinition):
+            # type of the member, it's also a node
+            # name of the member
+            sb.add(self.typeName).add(self.name).add_semi()
+
+        # parameter
+        elif isinstance(self.parent, ParameterList):
+            # type of the parameter, it's also a node
+            sb.add(self.typeName)
+            # indexed flag, for event parameter only
+            if hasattr(self, "indexed") and self.indexed is True:
+                sb.add("indexed")
+            # parameter location, memory, storage, calldata, etc.
+            if self.storageLocation != "default":
+                sb.add(self.storageLocation)
+            # name of the parameter
+            # Rule out anonymous variables
+            if len(self.name) > 0:
+                sb.add(self.name)
+            # We don't emit semicolons here
+
+        # other cases, i.e. variable declaration statement
+        else:
+            # type of the variable, it's also a node
+            sb.add(self.typeName)
+            # variable location, memory, storage, calldata, etc.
+            if self.storageLocation != "default":
+                sb.add(self.storageLocation)
+            # name of the variable
+            sb.add(self.name)
+
+
+class ElementaryTypeNameExpression(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.typeName)
+
+
+class ElementaryTypeName(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        if hasattr(self, "stateMutability") and self.stateMutability == "payable":
+            if isinstance(self.parent, ElementaryTypeNameExpression):
+                # Handle address in expression differently, if its a payable
+                # address, use 'payable' instead of 'address payable' as
+                # specified in official documentation
+                sb.add("payable")
+            else:
+                sb.add(self.name).add("payable")
+        else:
+            sb.add(self.name)
+
+
+class UserDefinedTypeName(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.pathNode)
+
+
+class ArrayTypeName(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        if hasattr(self, "length"):
+            sb.add(self.baseType).add("[").add(self.length).add("]")
+        else:
+            sb.add(self.baseType).add("[]")
+
+
+class IdentifierPath(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.name)
+
+
+class Mapping(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("mapping")
+        sb.add("(").add(self.keyType).add("=>").add(self.valueType).add(")")
+
+
+class PlaceholderStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("_").add_semi()
+
+
+class VariableDeclarationStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        if len(self.declarations) > 1:
+            sb.add_tuple(self.declarations)
+        else:
+            sb.add(self.declarations[0])
+        sb.add("=").add(self.initialValue)
+        # Special case in for statement:
+        # Variable declaration statement is used as an expression
+        if not (
+            isinstance(self.parent, ForStatement)
+            and self is self.parent.initializationExpression
+        ):
+            sb.add_semi()
+
+
+class ExpressionStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.expression)
+        # Special case in for statement:
+        # Expression statement is used as an expression
+        if not (
+            isinstance(self.parent, ForStatement) and self is self.parent.loopExpression
+        ):
+            sb.add_semi()
+
+
+class EmitStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # function sb.emit() has nothing to do with solidity's emit statement!
+        sb.add("emit").add(self.eventCall).add_semi()
+
+
+class RevertStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("revert").add(self.errorCall).add_semi()
+
+
+class IfStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # trueBody can be a block or a statement
+        sb.add("if").add("(").add(self.condition).add(")").add(self.trueBody)
+        # Check if else branch present
+        if hasattr(self, "falseBody"):
+            # falseBody can be a list of nodes or a normal node
+            sb.add("else").add(self.falseBody)
+
+
+class ForStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("for").add("(").add(self.initializationExpression).add(";")
+        sb.add(self.condition).add(";").add(self.loopExpression).add(")")
+        sb.add(self.body)
+
+
+class WhileStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("while").add("(").add(self.condition).add(")").add(self.body)
+
+
+class DoWhileStatement(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("do").add(self.body)
+        sb.add("while").add("(").add(self.condition).add(")").add_semi()
+
+
+class Return(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("return").add(self.expression).add_semi()
+
+
+class Break(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("break").add_semi()
+
+
+class TupleExpression(IterableNodeBase):
+
+    ITERABLE = "components"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add_tuple(self.components)
+
+
+class Continue(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("continue").add_semi()
+
+
+class FunctionCall(IterableNodeBase):
+
+    ITERABLE = "arguments"
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.expression)
+        if len(self.names) > 0:
+            sb.add("(").add_dict(values=self.arguments, keys=self.names).add(")")
+        else:
+            sb.add_tuple(self.arguments)
+
+
+class MemberAccess(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.expression).add(".").add(self.memberName)
+
+
+class IndexAccess(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.baseExpression).add("[").add(self.indexExpression).add("]")
+
+
+class IndexRangeAccess(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.baseExpression).add("[")
+        if hasattr(self, "startExpression"):
+            sb.add(self.startExpression)
+        sb.add(":")
+        if hasattr(self, "endExpression"):
+            sb.add(self.endExpression)
+        sb.add("]")
+
+
+class UnaryOperation(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.operator).add(self.subExpression)
+
+
+class BinaryOperation(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.leftExpression).add(self.operator).add(self.rightExpression)
+
+
+class Assignment(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.leftHandSide).add(self.operator).add(self.rightHandSide)
+
+
+class Literal(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        # string literals, printable
+        if self.kind == "string":
+            sb.add(ascii(self.value))
+        # string literals, non-printable
+        elif self.kind == "unicodeString":
+            sb.add("unicode").add(ascii(self.value))
+        # hex string literals
+        elif self.kind == "hexString":
+            sb.add("hex").add('"%s"' % self.hexValue)
+        # number literals
+        elif self.kind == "number":
+            sb.add(self.value)
+            # Note that there could be a sub-denomination, i.e. 100 wei
+            if hasattr(self, "subdenomination"):
+                sb.add(self.subdenomination)
+        # bool literals and any undefined literals goes here
+        else:
+            sb.add(self.value)
+
+
+class Identifier(NodeBase):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add(self.name)
+
+
+def node_class_factory(ast, parent=None):
+
+    if isinstance(ast, dict):
+        if "nodeType" not in ast:
+            # ast is a normal dict instead of an AST
+            return ast
+
+        node_type = ast.pop("nodeType")
+
+        if node_type not in globals():
+            # raise NotImplementedError(f"Node of type {node_type} isn't supported yet!")
+            logger.warning(f"Node of type {node_type} isn't supported yet!")
+            return NodeBase(ast=ast, parent=parent)
+
+        return globals()[node_type](ast=ast, parent=parent)
+
+    elif isinstance(ast, list):
+        return [node_class_factory(ast=a, parent=parent) for a in ast]
+
+    elif isinstance(ast, NodeBase):
+        if ast.parent is not None:
+            ast = deepcopy(ast)
+        ast.parent = parent
+
+    return ast
+
+
+AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
+AZazdollar_ = string.ascii_letters + "$_"
+
+
+class SourceBuilder:
+
+    def __init__(self, verbose=False, indent=0):
+        self.tokens = []
+        self.cache: deque = deque()
+        self.verbose = verbose
+        self.indent = indent
+
+        if verbose is True:
+            self.x_semicolon = ";\n"
+            self.x_comma = ",\n"
+            self.x_left_big_brace = "{\n"
+            self.x_right_big_brace = "}\n"
+        else:
+            self.x_semicolon = ";"
+            self.x_comma = ","
+            self.x_left_big_brace = "{"
+            self.x_right_big_brace = "}"
+
+    def _make(self, token: str):
+        if len(self.tokens) >= 1:
+            last = self.tokens[-1]
+            if token[0] in AZaz09dollar_ and last[-1] in AZaz09dollar_:
+                self.tokens.append(" ")
+        self.tokens.append(token)
+
+    def add(self, item: str | NodeBase) -> "SourceBuilder":
+        self.cache.appendleft(item)
+        return self
+
+    def add_all(self, items: list) -> "SourceBuilder":
+        self.cache.extendleft(items)
+        return self
+
+    def add_semi(self) -> "SourceBuilder":
+        self.cache.appendleft(self.x_semicolon)
+        return self
+
+    def add_blk(self, body: list) -> "SourceBuilder":
+        self.cache.extendleft((self.x_left_big_brace, *body, self.x_right_big_brace))
+        return self
+
+    def add_tuple(self, elements: list, pretty: bool = True) -> "SourceBuilder":
+
+        if len(elements) > 0:
+            temp = [","] * ((len(elements) << 1) - 1)
+            temp[0::2] = elements
+        else:
+            temp = []
+        if pretty is True:
+            self.cache.extendleft(("(", *temp, ")"))
+        else:
+            self.cache.extendleft(temp)
+        return self
+
+    def add_dict(self, values: list, keys: list | None = None) -> "SourceBuilder":
+
+        if len(values) == 0:
+            temp = []
+        elif keys is not None:
+            temp = [self.x_comma] * ((len(keys) << 2) - 1)
+            temp[0::4] = keys
+            temp[1::4] = itertools.repeat(":", times=len(keys))
+            temp[2::4] = values
+        else:
+            temp = [self.x_comma] * ((len(values) << 1) - 1)
+            temp[0::2] = values
+
+        if self.verbose is True:
+            temp.append("\n")
+
+        self.cache.extendleft((self.x_left_big_brace, *temp, self.x_right_big_brace))
+        return self
+
+    def build(self, root: NodeBase) -> str:
+        logger.debug("Converting syntax tree to source")
+        # To speed up pre-order visiting, we use stack-based iteration instead of
+        # recursion.
+        pre_ord_stack = [root]  # pre-order traverse stack
+        shift = 0  # indent level iff. indent is on
+        new_line = False  # new line flag, iff. indent is on
+
+        while len(pre_ord_stack) > 0:
+            x = pre_ord_stack.pop()
+            # Pure string value, should send it directly to tokens
+            if isinstance(x, str):
+                # iff. indent is on
+                if self.verbose is True:
+                    if x == self.x_left_big_brace:
+                        shift += self.indent
+                    elif x == self.x_right_big_brace:
+                        shift -= self.indent
+                    if new_line is True:
+                        if shift > 0:
+                            self._make(" " * shift)
+                        new_line = False
+                    if x.endswith("\n"):
+                        new_line = True
+                self._make(x)
+            # a node
+            # We need to split it into tokens and subnodes and put 'em back to stack
+            elif isinstance(x, NodeBase):
+                x.tokenize(sb=self)
+                pre_ord_stack.extend(self.cache)
+                self.cache.clear()
+            # Undefined behaviors goes here
+            else:
+                logger.error(
+                    f"Bad node {x}! Maybe the node is missing some key attributes?"
+                )
+
+        result = "".join(self.tokens)
+        self.tokens.clear()
+        return result

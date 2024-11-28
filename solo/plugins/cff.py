@@ -1,12 +1,11 @@
 import logging
 import random
-from copy import copy
-from collections import deque
-from solcast.nodes import NodeBase
+
+from ..solidity.nodes import *
 
 logger = logging.getLogger(__name__)
 
-class CodeSegment:
+class StateBlock:
 
     def __init__(self, state: int, next_state: int, body: list = []):
         self.state = state
@@ -14,7 +13,7 @@ class CodeSegment:
         self.next_state = next_state
 
 
-class StateSegment(CodeSegment):
+class StateSegment(StateBlock):
 
     def __init__(
         self,
@@ -31,7 +30,7 @@ class StateSegment(CodeSegment):
             self.continue_at = continue_at
 
 
-class BasicBlock(CodeSegment):
+class BasicBlock(StateBlock):
 
     def __init__(
         self,
@@ -53,7 +52,7 @@ class BasicBlock(CodeSegment):
 
 class CFG:
 
-    BRANCH_STMT = ("IfStatement", "ForStatement", "WhileStatement", "DoWhileStatement")
+    BRANCH_STMT = (IfStatement, ForStatement, WhileStatement, DoWhileStatement)
     STATE_LB = 1 << 127
     STATE_UB = (1 << 128) - 1
 
@@ -113,14 +112,14 @@ class CFG:
                 x = ss.body[i]
 
                 # Jump out statements
-                if x.nodeType == "Continue":
+                if isinstance(x, Continue):
                     if continue_at is None:
                         raise ValueError(
                             "A continue statement in non-loop environment, maybe the AST is broken??"
                         )
                     cfg.add_bb(state=ss.state, next_state=continue_at, body=ss.body[:i])
                     break
-                elif x.nodeType == "Break":
+                elif isinstance(x, Break):
                     if break_to is None:
                         raise ValueError(
                             "A break statement in non-loop environment, maybe the AST is broken??"
@@ -130,7 +129,7 @@ class CFG:
 
                 # Do BFS on the final branch if present
                 # Otherwise, the final state should be ss's next state
-                if x.nodeType in CFG.BRANCH_STMT:
+                if isinstance(x, CFG.BRANCH_STMT):
                     if i == len(ss.body) - 1:
                         final_state = ss.next_state
                     else:
@@ -145,7 +144,7 @@ class CFG:
                             )
                         )
 
-                if x.nodeType == "IfStatement":
+                if isinstance(x, IfStatement):
                     # Do BFS on the true branch
                     if len(x.trueBody) == 0:
                         true_state = final_state
@@ -186,7 +185,7 @@ class CFG:
 
                     break
 
-                elif x.nodeType == "ForStatement":
+                elif isinstance(x, ForStatement):
                     cond_state = cfg.gen_state()
                     loop_state = cfg.gen_state()
 
@@ -195,7 +194,7 @@ class CFG:
                         StateSegment(
                             state=true_state,
                             next_state=loop_state,
-                            body=[*x.nodes, x.loopExpression],
+                            body=[*x.body, x.loopExpression],
                             continue_at=loop_state,
                             break_to=final_state,
                         )
@@ -223,7 +222,7 @@ class CFG:
 
                     break
 
-                elif x.nodeType.endswith("WhileStatement"):
+                elif isinstance(x, (WhileStatement, DoWhileStatement)):
                     # Pre-compute state of the condition block
                     cond_state = cfg.gen_state()
 
@@ -243,7 +242,7 @@ class CFG:
                         )
 
                     # Add the beginning block
-                    if x.nodeType == "WhileStatement":  # while
+                    if isinstance(x, WhileStatement):  # while
                         cfg.add_bb(
                             state=ss.state, next_state=cond_state, body=ss.body[:i]
                         )
@@ -266,7 +265,7 @@ class CFG:
 
         return cfg
 
-def obfuscate(node: NodeBase) -> NodeBase:
+def run(node: NodeBase) -> NodeBase:
 
     logger.debug(f"Applying CFF on {node}")
 

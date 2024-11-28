@@ -1,12 +1,12 @@
 import logging
 import time
-from copy import deepcopy
 from importlib import import_module
 from packaging import version
 
-import solcx, solcast
+import solcx
 
-from .solidity.utils import gen_src
+from .solidity.nodes import SourceBuilder
+from .solidity.utils import from_standard_output
 
 REQUIRED_SOLC_VER = "0.8.28"
 
@@ -34,7 +34,7 @@ class Obfuscator:
 
         for name in plugins:
             if name not in dir():
-                plugin = import_module(name=name, package=".plugins")
+                plugin = import_module(name=".plugins." + name, package="solo")
                 self.plugins.add(plugin)
             else:
                 self.plugins.add(dir()[name])
@@ -57,7 +57,7 @@ class Obfuscator:
             return
 
         # TODO: obfuscate all sources under a directory
-        nodes = solcast.from_standard_output(output_json)
+        nodes = from_standard_output(output_json)
         logger.debug(f"Get {nodes} from source.")
         node = nodes[0]
 
@@ -73,16 +73,14 @@ class Obfuscator:
         # if a copy is really needed, regenerate one with output_json
 
         # node_obf = deepcopy(node)
-        node_obf = node
+        root = node
 
         for plugin in self.plugins:
-            node_obf = plugin.run(node_obf)
+            root = plugin.run(root)
 
         # convert and compress to source code
-        if self.verbose is True:
-            src = gen_src(node_obf, indent=2)
-        else:
-            src = gen_src(node_obf)
+        builder = SourceBuilder(verbose=self.verbose, indent=4)
+        src = builder.build(root)
 
         with open(output, "w") as fp:
             fp.write(src)

@@ -1,99 +1,91 @@
 import logging
 import random
 from collections import deque
-from solcast.nodes import NodeBase
+from copy import copy
+
 from ..solidity.utils import *
+from ..solidity.nodes import *
 from .oconst import random_name, random_number, opaque_int
 
 logger = logging.getLogger(__name__)
 
 
 OPAQUE_FALSE = (
-    lambda x_name, x, y_name, y: ast_ne(  # (x-y)^2 != x^2 - 2xy + y^2
-        ast_mul(  # (x-y)*(x-y)
-            ast_sub(ast_id(x_name), ast_id(y_name)),  # x-y
-            ast_sub(ast_id(x_name), ast_id(y_name)),  # x-y
+    lambda x_name, x, y_name, y: NE(  # (x-y)^2 != x^2 - 2xy + y^2
+        MUL(  # (x-y)*(x-y)
+            SUB(SYM(x_name), SYM(y_name)),  # x-y
+            SUB(SYM(x_name), SYM(y_name)),  # x-y
         ),
-        ast_add(  # x*x - 2*x*y + y*y
-            ast_sub(  # x*x - 2*x*y
-                ast_mul(ast_id(x_name), ast_id(x_name)),  # x*x
-                ast_mul(ast_mul(ast_num(2), ast_id(x_name)), ast_id(y_name)),  # 2*x*y
+        ADD(  # x*x - 2*x*y + y*y
+            SUB(  # x*x - 2*x*y
+                MUL(SYM(x_name), SYM(x_name)),  # x*x
+                MUL(MUL(NUM(2), SYM(x_name)), SYM(y_name)),  # 2*x*y
             ),
-            ast_mul(ast_id(y_name), ast_id(y_name)),  # y*y
+            MUL(SYM(y_name), SYM(y_name)),  # y*y
         ),
     ),
-    lambda x_name, x, y_name, y: ast_land(  # (x % 2 == 0) && (x % 2 == 1)
-        ast_eq(ast_mod(ast_id(x_name), ast_num(2)), ast_num(0)),
-        ast_eq(ast_mod(ast_id(x_name), ast_num(2)), ast_num(1)),
+    lambda x_name, x, y_name, y: LAND(  # (x % 2 == 0) && (x % 2 == 1)
+        EQ(MOD(SYM(x_name), NUM(2)), NUM(0)),
+        EQ(MOD(SYM(x_name), NUM(2)), NUM(1)),
     ),
-    lambda x_name, x, y_name, y: ast_land(  # (x >= y) && (x < y)
-        ast_ge(ast_id(x_name), ast_id(y_name)),
-        ast_lt(ast_id(x_name), ast_id(y_name)),
+    lambda x_name, x, y_name, y: LAND(  # (x >= y) && (x < y)
+        GE(SYM(x_name), SYM(y_name)),
+        LT(SYM(x_name), SYM(y_name)),
     ),
     # Feel free to add more!
 )
 
 
-def garbage_code(length: int = 1) -> list:
+def garbage_code(length: int = 1) -> Block:
     # For now, just generate
     # require(random_value == random_value);
-    result = []
+    body = []
     for _ in range(length):
         value = random_number()
-        garbage_expr = ast_func_call(
-            "require", [ast_eq(ast_num(value), ast_num(value))]
-        )
-        result.append(ast_expr_stmt(expr=garbage_expr))
-    return result
+        garbage_expr = FUNCALL("require", [EQ(NUM(value), NUM(value))])
+        body.append(EXPRSTMT(expr=garbage_expr))
+    return BLK(body)
 
 
-def obfuscate(node: NodeBase) -> NodeBase:
+def run(node: SourceUnit) -> SourceUnit:
     logger.debug(f"Inserting opaque predicates on {node}")
 
     # traverse the ast to insert opaque predicates
 
     bfs_queue = deque([node])  # BFS deque
-    count = 0
     while len(bfs_queue) > 0:
 
         n = bfs_queue.popleft()
 
-        if n.nodeType in ("FunctionDefinition", "ModifierDefinition"):
-            if hasattr(n, "nodes"):
-                original_nodes = n.nodes
-                opaque_false = random.choice(OPAQUE_FALSE)
-
+        if isinstance(n, (FunctionDefinition, ModifierDefinition)):
+            if hasattr(n, "body"):
                 x, y = random_number(), random_number()
                 x_name, y_name = (
                     random_name(),
                     random_name(),
                 )  # TODO: label name conflict
-                x_dec_stmt, y_dec_stmt = ast_var_dec_stmt(x_name, x), ast_var_dec_stmt(
-                    y_name, y
-                )
-                opaque_ast = ast_if_stmt(
+                x_dec_stmt = VARSTMT(x_name, x)
+                y_dec_stmt = VARSTMT(y_name, y)
+
+                body: Block = n.body
+                statements = body.iterable
+                # !!! must insert this before using BLK(statements)
+                # why??
+                # 3ms -- 300ms
+                body.iterable = []
+
+                opaque_false = random.choice(OPAQUE_FALSE)
+                opaque = IF(
                     cond=opaque_false(x_name=x_name, x=x, y_name=y_name, y=y),
                     true_body=garbage_code(length=4),
-                    false_body=[],
+                    false_body=BLK(statements),
                 )
 
-                n.nodes = []
+                body.iterable = [x_dec_stmt, y_dec_stmt, opaque]
 
-                opaque = as_node(parent=n, ast=opaque_ast, at="nodes", list_idx=0)
-                as_node(parent=n, ast=y_dec_stmt, at="nodes", list_idx=0)
-                as_node(parent=n, ast=x_dec_stmt, at="nodes", list_idx=0)
-
-                for x in original_nodes:
-                    x._parent = opaque
-                    opaque._children.add(x)
-                opaque.falseBody = original_nodes
-                # TODO add depth of original_nodes recursively
-
-                continue
-
-        if n.nodeType in ("ContractDefinition", "SourceUnit"):
-            for child in n._children:
-                bfs_queue.append(child)
+        elif isinstance(n, (ContractDefinition, SourceUnit)):
+            for decl in n:
+                bfs_queue.append(decl)
 
     logger.debug("Opaque predicates insertion done")
 
