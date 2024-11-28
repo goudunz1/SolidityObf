@@ -22,8 +22,10 @@ MODULES = [
     # example of adding and enabling controlFlowFlatten.py
     # {"name": "controlFlowFlatten", "enabled": True},
     {"name": "controlFlowFlatten", "enabled": False},
-    {"name": "opaquePredicates", "enabled": True},
-    {"name": "opaqueConstants", "enabled": True},
+    {"name": "opaquePredicates", "enabled": False},
+    {"name": "opaqueConstants", "enabled": False},
+    {"name": "dataFlowObfuscation", "enabled": False},
+    {"name": "identifierRenaming", "enabled": False},
 ]
 
 parser = argparse.ArgumentParser()
