@@ -1,6 +1,10 @@
-# SolidityObf
+# solo
 
-solidity obfuscator, version 0.8.28
+**sol**idity **o**bfuscator, version 0.8.28
+
+## Usage
+
+See `docs/*.md` for more information.
 
 ## References
 

@@ -297,7 +297,7 @@ class SourceUnit(IterableNodeBase):
         sb.add_all(self.nodes)
 
     @property
-    def functions(self) -> Generator:
+    def functions(self) -> "Generator[FunctionDefinition]":
         bfs_queue: deque = deque([self])  # BFS deque
         while len(bfs_queue) > 0:
             n = bfs_queue.popleft()
@@ -308,7 +308,7 @@ class SourceUnit(IterableNodeBase):
                     bfs_queue.append(decl)
 
     @property
-    def contracts(self) -> Generator:
+    def contracts(self) -> "Generator[ContractDefinition]":
         for decl in self:
             if isinstance(decl, ContractDefinition):
                 yield decl
@@ -337,7 +337,7 @@ class ContractDefinition(IterableNodeBase):
         # contract body
         sb.add_blk(self.nodes)
 
-    def functions(self) -> Generator:
+    def functions(self) -> "Generator[FunctionDefinition | ModifierDefinition]":
         for n in self:
             if isinstance(n, (FunctionDefinition, ModifierDefinition)):
                 yield n
