@@ -56,8 +56,15 @@ class NodeBase:
     """
 
     def _bind(self, node: "NodeBase", key: str) -> "NodeBase":
+        """
+        If the node already has a parent, we make a deepcopy of it to avoid
+        dangling children pointers.
+        """
+
         if node._parent is not self:
             if node._parent is not None:
+                # Save the original parent to prevent deepcopy() from copying
+                # the parent node
                 saved_parent, node._parent = node._parent, None
                 temp = deepcopy(node)
                 node._parent = saved_parent
@@ -122,6 +129,15 @@ class NodeBase:
                 self._parent._unbind(v)
 
             return super().__delitem__(key)
+        
+        @override
+        def __copy__(self):
+            """
+            We don't allow shallow copying of a NodeList, because there could
+            be dangling parent pointers, any copy operation will get a
+            list duplicate
+            """
+            return list(self)
 
         @override
         def insert(self, index: int, object: object):
@@ -170,6 +186,10 @@ class NodeBase:
                 self._parent._unbind(value)
 
             return super().remove(value)
+
+        @override
+        def copy(self):
+            return self.__copy__()
 
         @property
         def parent(self):
