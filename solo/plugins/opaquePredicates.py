@@ -10,19 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 OPAQUE_FALSE = (
-    lambda x_name, x, y_name, y: NE(  # (x-y)^2 != x^2 - 2xy + y^2
-        MUL(  # (x-y)*(x-y)
-            SUB(SYM(x_name), SYM(y_name)),  # x-y
-            SUB(SYM(x_name), SYM(y_name)),  # x-y
-        ),
-        ADD(  # x*x - 2*x*y + y*y
-            SUB(  # x*x - 2*x*y
-                MUL(SYM(x_name), SYM(x_name)),  # x*x
-                MUL(MUL(NUM(2), SYM(x_name)), SYM(y_name)),  # 2*x*y
-            ),
-            MUL(SYM(y_name), SYM(y_name)),  # y*y
-        ),
-    ),
     lambda x_name, x, y_name, y: LAND(  # (x % 2 == 0) && (x % 2 == 1)
         EQ(MOD(SYM(x_name), NUM(2)), NUM(0)),
         EQ(MOD(SYM(x_name), NUM(2)), NUM(1)),
@@ -32,6 +19,8 @@ OPAQUE_FALSE = (
         LT(SYM(x_name), SYM(y_name)),
     ),
     # Feel free to add more!
+    # Note that transactions will be reverted if there's an overflow, so avoid
+    # using a lot of multiplies. Bit operations are recommended!
 )
 
 
@@ -42,7 +31,7 @@ def garbage_code(length: int = 1) -> Block:
     for _ in range(length):
         value = random_number()
         garbage_expr = FUNCALL("require", [EQ(NUM(value), NUM(value))])
-        body.append(EXPRSTMT(expr=garbage_expr))
+        body.append(ExpressionStatement(expression=garbage_expr))
     return BLK(body)
 
 
@@ -59,8 +48,8 @@ def run(node: SourceUnit) -> SourceUnit:
                 random_name(),
                 random_name(),
             )  # TODO: label name conflict
-            x_dec_stmt = VARSTMT(x_name, x)
-            y_dec_stmt = VARSTMT(y_name, y)
+            x_dec_stmt = EVAR("int", x_name, x, stmt=True)
+            y_dec_stmt = EVAR("int", y_name, y, stmt=True)
 
             statements = body.main
             opaque_false = random.choice(OPAQUE_FALSE)

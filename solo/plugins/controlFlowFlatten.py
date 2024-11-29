@@ -285,7 +285,7 @@ def run(node: SourceUnit) -> SourceUnit:
             cfg = CFG.gen_cfg(body)
 
             state_name = random_name()
-            state_stmt = VARSTMT(name=state_name, value=cfg.init_state)
+            state_stmt = EVAR("uint", state_name, cfg.init_state, stmt=True)
             exit_cond = NE(SYM(state_name), NUM(cfg.end_state))
 
             switch_body = []
@@ -304,7 +304,7 @@ def run(node: SourceUnit) -> SourceUnit:
                 else:
                     state_update = ASSIGN(SYM(state_name), NUM(bb.next_state))
                 case_body.append(state_update)
-                case_body.append(CONTINUE())
+                case_body.append(Continue())
 
                 case_cond = EQ(SYM(state_name), NUM(state))
                 switch_body.append(IF(cond=case_cond, true_body=BLK(case_body)))

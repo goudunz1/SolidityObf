@@ -8,7 +8,7 @@ from .opaqueConstants import random_name
 logger = logging.getLogger(__name__)
 
 
-def extract_literals(contract: ContractDefinition) -> dict[str, list]:
+def extract_literals(contract: ContractDefinition) -> dict[str, list] | None:
     """Extract literals from the AST and store them in literal_storage."""
 
     literal_storage = {
@@ -17,6 +17,8 @@ def extract_literals(contract: ContractDefinition) -> dict[str, list]:
         "address": {"func": random_name(), "array": []},
         "bool": {"func": random_name(), "array": []},
     }
+
+    success = False
 
     for node in contract:
         if isinstance(node, VariableDeclaration):
@@ -30,10 +32,14 @@ def extract_literals(contract: ContractDefinition) -> dict[str, list]:
                 array.append(node.value)
                 index = len(array) - 1
                 node.value = FUNCALL(SYM(func_name), [NUM(index)])
+                success = True
             except KeyError:
                 logger.warning(f"Variable type {type_str} not supported!")
 
-    return literal_storage
+    if success is True:
+        return literal_storage
+    else:
+        return None
 
 
 def generate_constant_arrays(
@@ -44,7 +50,7 @@ def generate_constant_arrays(
 
         array: list = literal_storage[key]["array"]
         func_name: str = literal_storage[key]["func"]
-        arr_dec = ARRDEC(name="_" + func_name, value=array, etype=key)
+        arr_dec = AVAR(ETYPE(key), "_" + func_name, array)
         contract.main.append(arr_dec)
 
 
@@ -57,13 +63,22 @@ def generate_functions(contract: ContractDefinition, literal_storage: dict[str, 
             kind="function",
             name=func_name,
             parameters=ParameterList(
-                parameters=[VARDEC(name=idx_var_name, value=None, etype="uint256")]
+                parameters=[EVAR(etype="uint", name=idx_var_name, value=None)]
             ),
             visibility="internal",
             stateMutability="view",
             modifiers=[],
             virtual=False,
-            returnParameters=ParameterList(parameters=[VARDEC(name="", value=None, etype=key)]),
+            returnParameters=ParameterList(
+                parameters=[
+                    EVAR(
+                        etype=key,
+                        name="",
+                        value=None,
+                        storage="storage" if key == "string" else "default",
+                    )
+                ]
+            ),
             body=BLK(
                 statements=[
                     Return(
@@ -84,8 +99,9 @@ def run(node: SourceUnit) -> SourceUnit:
 
     for contract in node.contracts:
         literal_storage = extract_literals(contract)
-        generate_functions(contract, literal_storage)
-        generate_constant_arrays(contract, literal_storage)
+        if literal_storage is not None:
+            generate_functions(contract, literal_storage)
+            generate_constant_arrays(contract, literal_storage)
 
     logger.debug("Data flow obfuscation completed")
     return node

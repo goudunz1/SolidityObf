@@ -8,9 +8,11 @@ import solcx
 from .solidity.nodes import SourceBuilder
 from .solidity.utils import from_standard_output
 
-REQUIRED_SOLC_VER = "0.8.28"
-
 logger = logging.getLogger(__name__)
+
+
+# Check solc version when we load obfuscator
+REQUIRED_SOLC_VER = "0.8.28"
 
 try:
     solc_ver = solcx.get_solc_version()
@@ -34,7 +36,7 @@ class Obfuscator:
 
         for name in plugins:
             if name not in dir():
-                plugin = import_module(name=".plugins." + name, package="solo")
+                plugin = import_module(name=".plugins." + name, package=__package__)
                 self.plugins.add(plugin)
             else:
                 self.plugins.add(dir()[name])
@@ -66,20 +68,15 @@ class Obfuscator:
             f"Obfuscation starts at {time.asctime(time.localtime(start_time))}."
         )
 
-        # TODO: currently deepcopy of solcast node may encounter problems because of
-        # parent <-> child reference
-        # gonna integrate its code instead of importing it in the future
-        # for now we do not copy it
-        # if a copy is really needed, regenerate one with output_json
-
-        # node_obf = deepcopy(node)
         root = node
 
+        # We are calling plugins.plugin_name.run()
         for plugin in self.plugins:
             root = plugin.run(root)
 
-        # convert and compress to source code
+        # Convert and compress to source code
         builder = SourceBuilder(verbose=self.verbose, indent=4)
+        logger.debug("Converting syntax tree to source")
         src = builder.build(root)
 
         with open(output, "w") as fp:

@@ -10,6 +10,8 @@ plugins = {
     "bogus": {"name": "opaquePredicates", "enabled": True},
     "dfo": {"name": "dataFlowObfuscation", "enabled": True},
     "cff": {"name": "controlFlowFlatten", "enabled": True},
+    # Please register new plugins here, format:
+    # abbreviation: {"name": plugin_name, "enabled": True}
 }
 
 parser = argparse.ArgumentParser()
@@ -48,19 +50,22 @@ def main():
     file_name = os.path.basename(args.filepath)
     file_dir = os.path.dirname(args.filepath)
 
+    # Use output_path otherwise [file_name].out.sol
     if args.output is not None:
         output_path = args.output
     else:
         file_base, _ = os.path.splitext(file_name)
         output_path = file_dir + os.path.sep + file_base + ".out.sol"
 
-    logger.debug(f"Using {output_path} as output.")
+    logger.debug(f"Using {output_path} as output")
 
+    # Load plugins in command line argument order
     active_plugins = []
     for j in args.jobs:
         if plugins[j]["enabled"] is True:
             active_plugins.append(plugins[j]["name"])
 
+    # Do obfuscate, see obfuscator.py
     obfuscator = Obfuscator(verbose=args.verbose, plugins=active_plugins)
     obfuscator.run(url=args.filepath, output=output_path)
 

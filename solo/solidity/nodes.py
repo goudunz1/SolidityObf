@@ -38,11 +38,22 @@ from typing import override, Generator, Iterable
 
 logger = logging.getLogger(__name__)
 
-AZaz09dollar_ = string.ascii_letters + string.digits + "$_"
-AZazdollar_ = string.ascii_letters + "$_"
+AZAZ09DOLLAR_ = string.ascii_letters + string.digits + "$_"
+AZAZDOLLAR_ = string.ascii_letters + "$_"
 
 
 class NodeBase:
+    """
+    Represents a node within the solidity AST.
+
+    Attributes:
+        offset: Absolute source offsets as a (start, stop) tuple
+        contract_id: Contract ID as given by the standard compiler JSON
+
+        _fields: List of syntax attributes for this node
+        _parent: Reference to the parent node in the AST
+        _children: Dictionary with key pair {object : attribute_name}
+    """
 
     def _bind(self, node: "NodeBase", key: str) -> "NodeBase":
         if node._parent is not self:
@@ -168,18 +179,6 @@ class NodeBase:
         def parent_key(self):
             return self._parent_key
 
-    """
-    Represents a node within the solidity AST.
-
-    Attributes:
-        offset: Absolute source offsets as a (start, stop) tuple
-        contract_id: Contract ID as given by the standard compiler JSON
-
-        _fields: List of syntax attributes for this node
-        _parent: Reference to the parent node in the AST
-        _children: Dictionary with key pair {object : attribute_name}
-    """
-
     def _setattr(self, name: str, value: object):
         if name not in self._fields:
             self.__dict__[name] = value
@@ -236,7 +235,7 @@ class NodeBase:
                     repr_str += f" {self.__dict__[attr]}"
             else:
                 repr_str += " object"
-        return f"{repr_str}>"
+        return f"{repr_str} {id(self)}>"
 
     def tokenize(self, sb: "SourceBuilder"):
         pass
@@ -860,8 +859,15 @@ def node_class_factory(ast):
 
 
 class SourceBuilder:
+    """
+    Like a Java string builder but builds source code from an AST node.
 
-    def __init__(self, verbose=False, indent=0):
+    Arguments:
+        verbose(bool): verbose mode, if turned on, output indented source
+        indent(int): indent width, default 4
+    """
+
+    def __init__(self, verbose: bool = False, indent: int = 4):
         self.tokens: list = []
         self.cache: deque = deque()
         self.verbose = verbose
@@ -879,29 +885,42 @@ class SourceBuilder:
             self.x_right_big_brace = "}"
 
     def _make(self, token: str):
+        """Push a token into token pipeline."""
         if len(self.tokens) >= 1:
             last = self.tokens[-1]
-            if token[0] in AZaz09dollar_ and last[-1] in AZaz09dollar_:
+            if token[0] in AZAZ09DOLLAR_ and last[-1] in AZAZ09DOLLAR_:
                 self.tokens.append(" ")
         self.tokens.append(token)
 
     def add(self, item: str | NodeBase) -> "SourceBuilder":
+        """Add an item to temporary cache."""
         self.cache.appendleft(item)
         return self
 
     def add_all(self, items: list) -> "SourceBuilder":
+        """Add all items of the list to temporary cache."""
         self.cache.extendleft(items)
         return self
 
     def add_semi(self) -> "SourceBuilder":
+        """Add a semicolon (indent and line break included if needed) to temporary cache."""
         self.cache.appendleft(self.x_semicolon)
         return self
 
     def add_blk(self, body: list) -> "SourceBuilder":
+        """Add a block representation to temporary cache."""
         self.cache.extendleft((self.x_left_big_brace, *body, self.x_right_big_brace))
         return self
 
     def add_tuple(self, elements: list, format: str = "()") -> "SourceBuilder":
+        """
+        Add a tuple representation to temporary cache.
+
+        Arguments:
+            elements(list): elements of the tuple
+            format(str): style of parentheses, format[0] for left and format[1] for right
+        """
+
         if len(elements) > 0:
             temp = [","] * ((len(elements) << 1) - 1)
             temp[0::2] = elements
@@ -914,6 +933,13 @@ class SourceBuilder:
         return self
 
     def add_dict(self, values: list, keys: list | None = None) -> "SourceBuilder":
+        """
+        Add a dictionary representation to temporary cache.
+
+        Arguments:
+            values(list): value list of the dictionary
+            keys(list): key list of the dictionary, if not None, output in '{key: value}' format
+        """
         if len(values) == 0:
             temp = []
         elif keys is not None:
@@ -932,7 +958,13 @@ class SourceBuilder:
         return self
 
     def build(self, root: NodeBase) -> str:
-        logger.debug("Converting syntax tree to source")
+        """
+        Reconstruct the source code of an AST node.
+
+        Arguments:
+            root(NodeBase): the root node
+        """
+
         # To speed up pre-order visiting, we use stack-based iteration instead of
         # recursion.
         pre_ord_stack = [root]  # pre-order traverse stack

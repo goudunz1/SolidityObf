@@ -27,6 +27,8 @@ OPAQUE0 = (
         NOT(AND(SYM(x_name), NOT(SYM(y_name)))),
     ),
     # Feel free to add more!
+    # Note that transactions will be reverted if there's an overflow, so avoid
+    # using a lot of multiplies. Bit operations are recommended!
 )
 
 
@@ -39,8 +41,8 @@ def random_number(bits: int = 128) -> int:
 
 
 def random_name(length: int = 16) -> str:
-    start = random.choice(AZazdollar_)
-    return start + "".join(random.sample(AZaz09dollar_, length - 1))
+    start = random.choice(AZAZDOLLAR_)
+    return start + "".join(random.sample(AZAZ09DOLLAR_, length - 1))
 
 
 def opaque_int(
@@ -124,7 +126,9 @@ def run(node: SourceUnit) -> SourceUnit:
     while gcd(x, y) != 1:
         y = random_number()
     x_name, y_name = random_name(), random_name()  # TODO: label name conflict
-    x_dec, y_dec = VARDEC(x_name, x, const=True), VARDEC(y_name, y, const=True)
+    x_dec, y_dec = EVAR("int", x_name, x, const=True), EVAR(
+        "int", y_name, y, const=True
+    )
 
     index = 0
     for n in node:
@@ -163,7 +167,9 @@ def run(node: SourceUnit) -> SourceUnit:
                     if denominator == 1:
                         value = numerator
                         # We can represent *value* using 128 bits
-                        if (value >> 128) == 0:
+                        if value == 0:
+                            expr = opaque_int(value, x_name, x, y_name, y)
+                        elif (value >> 128) == 0:
                             expr = opaque_int(value, x_name, x, y_name, y)
                             # Note that there'll be junk values in the high
                             # 128 bits of the result
@@ -189,7 +195,10 @@ def run(node: SourceUnit) -> SourceUnit:
 
                         # TODO type conversion??
                         # TODO sub-denomination
-                        expr = ETYPECONV("uint", expr)
+                        if value < 0:
+                            expr = ETYPECONV("int", expr)
+                        else:
+                            expr = ETYPECONV("uint", expr)
 
                         replace_with(n, expr)
 
