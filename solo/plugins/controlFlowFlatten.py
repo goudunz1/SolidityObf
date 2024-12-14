@@ -37,6 +37,9 @@ class StateSegment(StateBlock):
 
 class BasicBlock(StateBlock):
 
+    total_blocks = 0
+    total_edges = 0
+
     def __init__(
         self,
         state: int,
@@ -49,6 +52,10 @@ class BasicBlock(StateBlock):
         if cond is not None:
             self.cond = cond
             self.jump_state = jump_state
+            BasicBlock.total_edges += 1
+
+        BasicBlock.total_blocks += 1
+        BasicBlock.total_edges += 1
 
     @staticmethod
     def of_ss(ss: StateSegment):

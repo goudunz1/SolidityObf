@@ -129,7 +129,7 @@ class NodeBase:
                 self._parent._unbind(v)
 
             return super().__delitem__(key)
-        
+
         @override
         def __copy__(self):
             """
@@ -369,6 +369,14 @@ class Block(IterableNodeBase):
     @override
     def tokenize(self, sb: "SourceBuilder"):
         sb.add_blk(self.statements)
+
+
+class UncheckedBlock(Block):
+
+    @override
+    def tokenize(self, sb: "SourceBuilder"):
+        sb.add("unchecked")
+        super().tokenize(sb=sb)
 
 
 class InheritanceSpecifier(NodeBase):
